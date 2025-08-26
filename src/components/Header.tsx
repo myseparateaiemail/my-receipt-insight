@@ -11,7 +11,7 @@ export const Header = () => {
               <Receipt className="h-6 w-6 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground">ReceiptTracker</h1>
+              <h1 className="text-xl font-bold text-foreground">grocer</h1>
               <p className="text-sm text-muted-foreground">Smart grocery analytics</p>
             </div>
           </div>
