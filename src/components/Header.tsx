@@ -1,5 +1,6 @@
-import { Camera, BarChart3, Receipt, Settings } from "lucide-react";
+import { Camera, BarChart3, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import receiptLettuceIcon from "@/assets/receipt-lettuce-icon.png";
 
 export const Header = () => {
   return (
@@ -8,7 +9,7 @@ export const Header = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-lg bg-gradient-to-br from-primary to-primary-glow">
-              <Receipt className="h-6 w-6 text-primary-foreground" />
+              <img src={receiptLettuceIcon} alt="Receipt with lettuce" className="h-6 w-6" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">grocer</h1>

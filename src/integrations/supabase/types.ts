@@ -14,7 +14,89 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      receipt_items: {
+        Row: {
+          category: string | null
+          created_at: string
+          id: string
+          item_name: string
+          quantity: number | null
+          receipt_id: string
+          total_price: number
+          unit_price: number | null
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          id?: string
+          item_name: string
+          quantity?: number | null
+          receipt_id: string
+          total_price: number
+          unit_price?: number | null
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          id?: string
+          item_name?: string
+          quantity?: number | null
+          receipt_id?: string
+          total_price?: number
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipt_items_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      receipts: {
+        Row: {
+          created_at: string
+          id: string
+          image_url: string | null
+          ocr_text: string | null
+          receipt_date: string
+          store_address: string | null
+          store_name: string | null
+          tax_amount: number | null
+          total_amount: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          ocr_text?: string | null
+          receipt_date: string
+          store_address?: string | null
+          store_name?: string | null
+          tax_amount?: number | null
+          total_amount: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          ocr_text?: string | null
+          receipt_date?: string
+          store_address?: string | null
+          store_name?: string | null
+          tax_amount?: number | null
+          total_amount?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
