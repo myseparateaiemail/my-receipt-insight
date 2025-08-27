@@ -38,34 +38,118 @@ export type Database = {
         }
         Relationships: []
       }
-      receipt_items: {
+      receipt_categories: {
         Row: {
-          category: string | null
+          color: string | null
+          created_at: string
+          description: string | null
+          icon: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      receipt_category_assignments: {
+        Row: {
+          category_id: string
           created_at: string
           id: string
+          receipt_id: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          id?: string
+          receipt_id: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          id?: string
+          receipt_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipt_category_assignments_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "receipt_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_category_assignments_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      receipt_items: {
+        Row: {
+          brand: string | null
+          category: string | null
+          created_at: string
+          description: string | null
+          discount_amount: number | null
+          id: string
           item_name: string
+          line_number: number | null
+          product_code: string | null
           quantity: number | null
           receipt_id: string
+          tax_amount: number | null
+          tax_rate: number | null
           total_price: number
           unit_price: number | null
         }
         Insert: {
+          brand?: string | null
           category?: string | null
           created_at?: string
+          description?: string | null
+          discount_amount?: number | null
           id?: string
           item_name: string
+          line_number?: number | null
+          product_code?: string | null
           quantity?: number | null
           receipt_id: string
+          tax_amount?: number | null
+          tax_rate?: number | null
           total_price: number
           unit_price?: number | null
         }
         Update: {
+          brand?: string | null
           category?: string | null
           created_at?: string
+          description?: string | null
+          discount_amount?: number | null
           id?: string
           item_name?: string
+          line_number?: number | null
+          product_code?: string | null
           quantity?: number | null
           receipt_id?: string
+          tax_amount?: number | null
+          tax_rate?: number | null
           total_price?: number
           unit_price?: number | null
         }
@@ -81,40 +165,73 @@ export type Database = {
       }
       receipts: {
         Row: {
+          cashier_name: string | null
+          confidence_score: number | null
           created_at: string
+          discount_amount: number | null
           id: string
           image_url: string | null
           ocr_text: string | null
+          payment_method: string | null
+          processing_status: string | null
           receipt_date: string
+          receipt_number: string | null
           store_address: string | null
+          store_email: string | null
           store_name: string | null
+          store_phone: string | null
+          subtotal_amount: number | null
+          tags: string[] | null
           tax_amount: number | null
+          tip_amount: number | null
           total_amount: number
           updated_at: string
           user_id: string
         }
         Insert: {
+          cashier_name?: string | null
+          confidence_score?: number | null
           created_at?: string
+          discount_amount?: number | null
           id?: string
           image_url?: string | null
           ocr_text?: string | null
+          payment_method?: string | null
+          processing_status?: string | null
           receipt_date: string
+          receipt_number?: string | null
           store_address?: string | null
+          store_email?: string | null
           store_name?: string | null
+          store_phone?: string | null
+          subtotal_amount?: number | null
+          tags?: string[] | null
           tax_amount?: number | null
+          tip_amount?: number | null
           total_amount: number
           updated_at?: string
           user_id: string
         }
         Update: {
+          cashier_name?: string | null
+          confidence_score?: number | null
           created_at?: string
+          discount_amount?: number | null
           id?: string
           image_url?: string | null
           ocr_text?: string | null
+          payment_method?: string | null
+          processing_status?: string | null
           receipt_date?: string
+          receipt_number?: string | null
           store_address?: string | null
+          store_email?: string | null
           store_name?: string | null
+          store_phone?: string | null
+          subtotal_amount?: number | null
+          tags?: string[] | null
           tax_amount?: number | null
+          tip_amount?: number | null
           total_amount?: number
           updated_at?: string
           user_id?: string
