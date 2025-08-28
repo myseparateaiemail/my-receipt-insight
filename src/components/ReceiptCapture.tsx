@@ -1,15 +1,21 @@
 import { useState } from "react";
-import { Camera, Upload, Check, Zap } from "lucide-react";
+import { Camera, Upload, Check, Zap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import sampleReceipt from "@/assets/sample-receipt.jpg";
 
-export const ReceiptCapture = () => {
+interface ReceiptCaptureProps {
+  onUploadSuccess?: () => void;
+}
+
+export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [uploadedReceiptId, setUploadedReceiptId] = useState<string | null>(null);
   const { toast } = useToast();
@@ -28,73 +34,113 @@ export const ReceiptCapture = () => {
     }, 2000);
   };
 
-  const uploadToStorage = async (file: File): Promise<string | null> => {
+  const processReceiptFile = async (file: File) => {
     if (!user) {
       toast({
         title: "Error",
         description: "You must be logged in to upload receipts",
         variant: "destructive",
       });
-      return null;
-    }
-
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${user.id}/${Date.now()}.${fileExt}`;
-
-    const { data, error } = await supabase.storage
-      .from('receipts')
-      .upload(fileName, file);
-
-    if (error) {
-      console.error('Upload error:', error);
-      toast({
-        title: "Upload Failed",
-        description: "Failed to upload receipt image",
-        variant: "destructive",
-      });
-      return null;
-    }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from('receipts')
-      .getPublicUrl(fileName);
-
-    return publicUrl;
-  };
-
-  const saveReceiptToDatabase = async (imageUrl: string, file: File) => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('receipts')
-      .insert([
-        {
-          user_id: user.id,
-          image_url: imageUrl,
-          store_name: 'Unknown Store',
-          receipt_date: new Date().toISOString().split('T')[0],
-          total_amount: 0,
-          ocr_text: null,
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Database error:', error);
-      toast({
-        title: "Save Failed",
-        description: "Failed to save receipt to database",
-        variant: "destructive",
-      });
       return;
     }
 
-    setUploadedReceiptId(data.id);
-    toast({
-      title: "Receipt Saved!",
-      description: "Receipt uploaded and saved successfully",
-    });
+    console.log('Uploading file:', file.name);
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      // Upload image to Supabase storage
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `${user.id}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('receipts')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        toast({
+          title: "Upload Failed",
+          description: "Failed to upload receipt image",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setUploadProgress(30);
+
+      // Get the public URL for the uploaded image
+      const { data: { publicUrl } } = supabase.storage
+        .from('receipts')
+        .getPublicUrl(filePath);
+
+      console.log('Image uploaded successfully, URL:', publicUrl);
+
+      // Create receipt record in database
+      const { data: receipt, error: insertError } = await supabase
+        .from('receipts')
+        .insert({
+          user_id: user.id,
+          image_url: publicUrl,
+          receipt_date: new Date().toISOString().split('T')[0],
+          total_amount: 0,
+          processing_status: 'processing'
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Database insert error:', insertError);
+        toast({
+          title: "Save Failed",
+          description: "Failed to save receipt to database",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setUploadProgress(60);
+      setUploadedReceiptId(receipt.id);
+
+      // Process OCR
+      console.log('Starting OCR processing for receipt:', receipt.id);
+      const { error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
+        body: {
+          receiptId: receipt.id,
+          imageUrl: publicUrl,
+        },
+      });
+
+      if (ocrError) {
+        console.error('OCR processing error:', ocrError);
+        toast({
+          title: "Processing Warning",
+          description: "Receipt saved but OCR processing failed. You may need to enter details manually.",
+          variant: "destructive",
+        });
+      } else {
+        console.log('OCR processing completed successfully');
+        toast({
+          title: "Success!",
+          description: "Receipt uploaded and processed successfully",
+        });
+      }
+
+      setUploadProgress(100);
+      onUploadSuccess?.();
+
+    } catch (error) {
+      console.error('Upload failed:', error);
+      toast({
+        title: "Error",
+        description: "Upload failed. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   const handleUpload = () => {
@@ -104,8 +150,6 @@ export const ReceiptCapture = () => {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        setIsUploading(true);
-        
         // Show preview
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -113,13 +157,8 @@ export const ReceiptCapture = () => {
         };
         reader.readAsDataURL(file);
 
-        // Upload to storage
-        const imageUrl = await uploadToStorage(file);
-        if (imageUrl) {
-          await saveReceiptToDatabase(imageUrl, file);
-        }
-        
-        setIsUploading(false);
+        // Process the file
+        await processReceiptFile(file);
       }
     };
     input.click();
@@ -139,18 +178,18 @@ export const ReceiptCapture = () => {
             <div className="border-2 border-dashed border-border rounded-lg p-8 text-center bg-muted/20">
               <Camera className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground mb-4">
-                Take a photo or upload your grocery receipt
+                Take a photo or upload your grocery receipt for automatic processing
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button 
                   variant="capture" 
                   size="lg"
                   onClick={handleCapture}
-                  disabled={isCapturing}
+                  disabled={isCapturing || isUploading}
                 >
                   {isCapturing ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Capturing...
                     </>
                   ) : (
@@ -164,12 +203,12 @@ export const ReceiptCapture = () => {
                   variant="outline" 
                   size="lg" 
                   onClick={handleUpload}
-                  disabled={isUploading}
+                  disabled={isUploading || isCapturing}
                 >
                   {isUploading ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                      Uploading...
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Processing...
                     </>
                   ) : (
                     <>
@@ -180,6 +219,22 @@ export const ReceiptCapture = () => {
                 </Button>
               </div>
             </div>
+            
+            {isUploading && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Processing receipt...</span>
+                  <span className="text-muted-foreground">{uploadProgress}%</span>
+                </div>
+                <Progress value={uploadProgress} className="h-2" />
+                <p className="text-xs text-muted-foreground text-center">
+                  {uploadProgress < 30 && "Uploading image..."}
+                  {uploadProgress >= 30 && uploadProgress < 60 && "Saving to database..."}
+                  {uploadProgress >= 60 && uploadProgress < 100 && "Extracting text with OCR..."}
+                  {uploadProgress === 100 && "Complete!"}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
@@ -195,10 +250,10 @@ export const ReceiptCapture = () => {
             </div>
             <div className="text-center space-y-2">
               <p className="text-success font-medium">
-                {uploadedReceiptId ? "Receipt saved successfully!" : "Receipt processed successfully!"}
+                {uploadedReceiptId ? "Receipt processed and saved!" : "Receipt captured successfully!"}
               </p>
               <p className="text-sm text-muted-foreground">
-                {uploadedReceiptId ? "Receipt stored in your account" : "Ready for processing"}
+                {uploadedReceiptId ? "Text extracted and stored automatically" : "Ready for processing"}
               </p>
               <Button 
                 variant="hero" 
@@ -206,8 +261,9 @@ export const ReceiptCapture = () => {
                   setCapturedImage(null);
                   setUploadedReceiptId(null);
                 }}
+                disabled={isUploading}
               >
-                Capture Another
+                Process Another Receipt
               </Button>
             </div>
           </div>
