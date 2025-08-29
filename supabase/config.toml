@@ -41,4 +41,4 @@ port = 54326
 enabled = false
 
 [functions.process-receipt-ocr]
-verify_jwt = true
+verify_jwt = false
