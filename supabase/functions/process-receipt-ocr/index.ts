@@ -82,11 +82,12 @@ serve(async (req) => {
 
     console.log('Calling Vision API...');
     const visionResponse = await fetch(
-      `https://vision.googleapis.com/v1/images:annotate?key=${visionApiKey}`,
+      'https://vision.googleapis.com/v1/images:annotate',
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${visionApiKey}`,
         },
         body: JSON.stringify({
           requests: [
