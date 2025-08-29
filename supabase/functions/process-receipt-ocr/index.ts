@@ -38,14 +38,11 @@ serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization');
+    
+    // Create Supabase client with service role key for database operations
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      {
-        global: {
-          headers: authHeader ? { Authorization: authHeader } : {},
-        },
-      }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
     const { receiptId, imageUrl } = await req.json();
