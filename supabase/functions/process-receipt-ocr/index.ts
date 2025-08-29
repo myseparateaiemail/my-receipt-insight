@@ -73,10 +73,14 @@ serve(async (req) => {
 
     // Call Google Vision API for text extraction
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
+    console.log('Vision API key present:', !!visionApiKey);
+    
     if (!visionApiKey) {
+      console.error('Google Vision API key not configured');
       throw new Error('Google Vision API key not configured');
     }
 
+    console.log('Calling Vision API...');
     const visionResponse = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${visionApiKey}`,
       {
@@ -101,6 +105,14 @@ serve(async (req) => {
         }),
       }
     );
+
+    console.log('Vision API response status:', visionResponse.status);
+    
+    if (!visionResponse.ok) {
+      const errorText = await visionResponse.text();
+      console.error('Vision API error:', errorText);
+      throw new Error(`Vision API error: ${visionResponse.status} - ${errorText}`);
+    }
 
     const visionData = await visionResponse.json();
     console.log('Vision API response:', JSON.stringify(visionData));
