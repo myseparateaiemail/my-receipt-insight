@@ -30,6 +30,15 @@ interface ReceiptData {
   }>;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -37,9 +46,7 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization');
-    
-    // Create Supabase client with service role key for database operations
+    // Create Supabase client with service role key
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -62,7 +69,7 @@ serve(async (req) => {
     }
 
     const imageBuffer = await imageResponse.arrayBuffer();
-    const base64Image = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
+    const base64Image = arrayBufferToBase64(imageBuffer);
 
     // Call Google Vision API for text extraction
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
@@ -131,7 +138,7 @@ serve(async (req) => {
         payment_method: parsedData.payment_method,
         cashier_name: parsedData.cashier_name,
         processing_status: 'completed',
-        confidence_score: 0.85, // Placeholder confidence score
+        confidence_score: 0.85,
         updated_at: new Date().toISOString(),
       })
       .eq('id', receiptId);
@@ -159,7 +166,6 @@ serve(async (req) => {
 
       if (itemsError) {
         console.error('Error inserting receipt items:', itemsError);
-        // Don't throw here, as the main receipt data was successfully updated
       }
     }
 
