@@ -107,10 +107,12 @@ serve(async (req) => {
     );
 
     console.log('Vision API response status:', visionResponse.status);
+    console.log('Vision API response headers:', Object.fromEntries(visionResponse.headers.entries()));
     
     if (!visionResponse.ok) {
       const errorText = await visionResponse.text();
       console.error('Vision API error:', errorText);
+      console.error('Vision API request URL:', `https://vision.googleapis.com/v1/images:annotate?key=${visionApiKey?.substring(0, 10)}...`);
       throw new Error(`Vision API error: ${visionResponse.status} - ${errorText}`);
     }
 
