@@ -74,6 +74,7 @@ serve(async (req) => {
     // Call Google Vision API for text extraction
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
     console.log('Vision API key present:', !!visionApiKey);
+    console.log('Vision API key first 10 chars:', visionApiKey?.substring(0, 10) || 'undefined');
     
     if (!visionApiKey) {
       console.error('Google Vision API key not configured');
