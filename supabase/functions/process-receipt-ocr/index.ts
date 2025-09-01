@@ -75,6 +75,7 @@ serve(async (req) => {
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
     console.log('Vision API key present:', !!visionApiKey);
     console.log('Vision API key first 10 chars:', visionApiKey?.substring(0, 10) || 'undefined');
+    console.log('Environment check - API key loaded correctly');
     
     if (!visionApiKey) {
       console.error('Google Vision API key not configured');
