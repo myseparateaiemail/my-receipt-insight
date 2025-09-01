@@ -103,6 +103,25 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       setUploadProgress(60);
       setUploadedReceiptId(receipt.id);
 
+      // First test the environment variables
+      console.log('Testing environment configuration...');
+      const { data: envTest, error: envError } = await supabase.functions.invoke(
+        'test-env',
+        { body: {} }
+      );
+      
+      console.log('Environment test result:', envTest);
+      
+      if (envError || !envTest?.google_api_key_present) {
+        console.error('Environment test failed:', envError || 'API key not present');
+        toast({
+          title: "Configuration Error",
+          description: `OCR setup incomplete. API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}`,
+          variant: "destructive",
+        });
+        return;
+      }
+
       // Process OCR
       console.log('Starting OCR processing for receipt:', receipt.id);
       const { error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
