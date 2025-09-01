@@ -46,6 +46,39 @@ serve(async (req) => {
   }
 
   try {
+    // Enhanced environment debugging
+    const allEnvVars = Deno.env.toObject();
+    const apiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
+    
+    console.log('=== OCR FUNCTION ENVIRONMENT DEBUG ===');
+    console.log('All environment variables:', Object.keys(allEnvVars));
+    console.log('API key present:', !!apiKey);
+    console.log('API key length:', apiKey?.length || 0);
+    console.log('API key first 20 chars:', apiKey?.substring(0, 20) || 'undefined');
+    console.log('Raw API key value type:', typeof apiKey);
+    console.log('Is API key truthy:', !!apiKey);
+    console.log('API key equals undefined string:', apiKey === 'undefined');
+    console.log('API key trimmed length:', apiKey?.trim().length || 0);
+    console.log('=====================================');
+
+    if (!apiKey || apiKey.trim() === '' || apiKey === 'undefined') {
+      console.error('CRITICAL: Google Cloud API Key is not properly loaded');
+      console.error('Environment variables present:', Object.keys(allEnvVars));
+      return new Response(JSON.stringify({ 
+        error: 'Google Cloud API Key not configured properly',
+        debug: {
+          keyPresent: !!apiKey,
+          keyLength: apiKey?.length || 0,
+          keyType: typeof apiKey,
+          keyValue: apiKey === 'undefined' ? 'string_undefined' : 'other',
+          allVars: Object.keys(allEnvVars)
+        }
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Create Supabase client with service role key
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -73,12 +106,12 @@ serve(async (req) => {
 
     // Call Google Vision API for text extraction
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
-    console.log('Vision API key present:', !!visionApiKey);
-    console.log('Vision API key first 10 chars:', visionApiKey?.substring(0, 10) || 'undefined');
-    console.log('Environment check - API key loaded correctly');
+    console.log('Vision API call - Key present:', !!visionApiKey);
+    console.log('Vision API call - Key length:', visionApiKey?.length || 0);
+    console.log('Vision API call - Key first 20:', visionApiKey?.substring(0, 20) || 'undefined');
     
-    if (!visionApiKey) {
-      console.error('Google Vision API key not configured');
+    if (!visionApiKey || visionApiKey.trim() === '' || visionApiKey === 'undefined') {
+      console.error('Google Vision API key not configured properly at call time');
       throw new Error('Google Vision API key not configured');
     }
 
@@ -113,9 +146,25 @@ serve(async (req) => {
     
     if (!visionResponse.ok) {
       const errorText = await visionResponse.text();
-      console.error('Vision API error:', errorText);
-      console.error('Vision API request URL:', `https://vision.googleapis.com/v1/images:annotate?key=${visionApiKey?.substring(0, 10)}...`);
-      throw new Error(`Vision API error: ${visionResponse.status} - ${errorText}`);
+      console.error('Vision API error details:');
+      console.error('Status:', visionResponse.status);
+      console.error('Status Text:', visionResponse.statusText);
+      console.error('Response:', errorText);
+      console.error('API Key used (first 20):', visionApiKey?.substring(0, 20));
+      
+      return new Response(JSON.stringify({ 
+        error: 'Vision API request failed',
+        details: {
+          status: visionResponse.status,
+          statusText: visionResponse.statusText,
+          response: errorText,
+          apiKeyPresent: !!visionApiKey,
+          apiKeyLength: visionApiKey?.length || 0
+        }
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const visionData = await visionResponse.json();

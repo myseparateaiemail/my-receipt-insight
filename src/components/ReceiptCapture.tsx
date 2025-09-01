@@ -103,7 +103,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       setUploadProgress(60);
       setUploadedReceiptId(receipt.id);
 
-      // First test the environment variables
+      // Test environment and proceed with OCR regardless to get detailed error info
       console.log('Testing environment configuration...');
       const { data: envTest, error: envError } = await supabase.functions.invoke(
         'test-env',
@@ -114,17 +114,19 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       
       if (envError || !envTest?.google_api_key_present) {
         console.error('Environment test failed:', envError || 'API key not present');
+        console.error('Full env test data:', envTest);
+        
+        // Show warning but still attempt OCR to get detailed error information
         toast({
-          title: "Configuration Error",
-          description: `OCR setup incomplete. API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}`,
+          title: "Environment Warning",
+          description: `API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}. Attempting OCR for detailed diagnostics...`,
           variant: "destructive",
         });
-        return;
       }
 
-      // Process OCR
+      // Process OCR with enhanced error handling
       console.log('Starting OCR processing for receipt:', receipt.id);
-      const { error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
+      const { data: ocrResult, error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
         body: {
           receiptId: receipt.id,
           imageUrl: publicUrl,
@@ -133,13 +135,21 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       if (ocrError) {
         console.error('OCR processing error:', ocrError);
+        console.error('OCR result data:', ocrResult);
+        
+        const errorMessage = ocrError.message || 'Unknown OCR error';
+        const isConfigError = errorMessage.includes('API Key') || errorMessage.includes('not configured');
+        
         toast({
-          title: "Processing Warning",
-          description: "Receipt saved but OCR processing failed. You may need to enter details manually.",
+          title: isConfigError ? "Configuration Error" : "Processing Error",
+          description: isConfigError 
+            ? `OCR setup incomplete: ${errorMessage}`
+            : "Receipt saved but OCR processing failed. You may need to enter details manually.",
           variant: "destructive",
         });
       } else {
         console.log('OCR processing completed successfully');
+        console.log('OCR result:', ocrResult);
         toast({
           title: "Success!",
           description: "Receipt uploaded and processed successfully",
