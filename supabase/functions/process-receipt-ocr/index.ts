@@ -65,16 +65,17 @@ serve(async (req) => {
     console.log('Raw Google API key value:', JSON.stringify(apiKey));
     console.log('===================================');
 
-    if (!apiKey || apiKey.trim() === '' || apiKey === 'undefined') {
-      console.error('CRITICAL: Google Cloud API Key is not properly loaded');
+    // Try BOTH the old and new secret names
+    if ((!apiKey || apiKey.trim() === '') && !Deno.env.get('GOOGLE_VISION_API_KEY')) {
+      console.error('CRITICAL: No Google API Key found with either name');
       console.error('Environment variables present:', Object.keys(allEnvVars));
       return new Response(JSON.stringify({ 
         error: 'Google Cloud API Key not configured properly',
         debug: {
-          keyPresent: !!apiKey,
-          keyLength: apiKey?.length || 0,
-          keyType: typeof apiKey,
-          keyValue: apiKey === 'undefined' ? 'string_undefined' : 'other',
+          oldKeyPresent: !!apiKey,
+          oldKeyLength: apiKey?.length || 0,
+          newKeyPresent: !!Deno.env.get('GOOGLE_VISION_API_KEY'),
+          newKeyLength: Deno.env.get('GOOGLE_VISION_API_KEY')?.length || 0,
           allVars: Object.keys(allEnvVars)
         }
       }), {
@@ -108,14 +109,14 @@ serve(async (req) => {
     const imageBuffer = await imageResponse.arrayBuffer();
     const base64Image = arrayBufferToBase64(imageBuffer);
 
-    // Call Google Vision API for text extraction
-    const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
-    console.log('Vision API call - Key present:', !!visionApiKey);
-    console.log('Vision API call - Key length:', visionApiKey?.length || 0);
-    console.log('Vision API call - Key first 20:', visionApiKey?.substring(0, 20) || 'undefined');
+    // Use whichever API key is available
+    const visionApiKey = Deno.env.get('GOOGLE_VISION_API_KEY') || Deno.env.get('GOOGLE_CLOUD_API_KEY');
+    console.log('Final API key selection - Key present:', !!visionApiKey);
+    console.log('Final API key selection - Key length:', visionApiKey?.length || 0);
+    console.log('Final API key selection - Source:', Deno.env.get('GOOGLE_VISION_API_KEY') ? 'GOOGLE_VISION_API_KEY' : 'GOOGLE_CLOUD_API_KEY');
     
-    if (!visionApiKey || visionApiKey.trim() === '' || visionApiKey === 'undefined') {
-      console.error('Google Vision API key not configured properly at call time');
+    if (!visionApiKey || visionApiKey.trim() === '') {
+      console.error('No valid Google API key found from either source');
       throw new Error('Google Vision API key not configured');
     }
 
