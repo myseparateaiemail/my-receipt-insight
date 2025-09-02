@@ -50,16 +50,20 @@ serve(async (req) => {
     const allEnvVars = Deno.env.toObject();
     const apiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
     
-    console.log('=== OCR FUNCTION ENVIRONMENT DEBUG ===');
+    // Test if OTHER secrets work to isolate the issue
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    console.log('=== COMPREHENSIVE SECRET DEBUG ===');
     console.log('All environment variables:', Object.keys(allEnvVars));
-    console.log('API key present:', !!apiKey);
-    console.log('API key length:', apiKey?.length || 0);
-    console.log('API key first 20 chars:', apiKey?.substring(0, 20) || 'undefined');
-    console.log('Raw API key value type:', typeof apiKey);
-    console.log('Is API key truthy:', !!apiKey);
-    console.log('API key equals undefined string:', apiKey === 'undefined');
-    console.log('API key trimmed length:', apiKey?.trim().length || 0);
-    console.log('=====================================');
+    console.log('SUPABASE_URL present:', !!supabaseUrl);
+    console.log('SUPABASE_URL length:', supabaseUrl?.length || 0);
+    console.log('SERVICE_KEY present:', !!serviceKey);
+    console.log('SERVICE_KEY length:', serviceKey?.length || 0);
+    console.log('GOOGLE_API_KEY present:', !!apiKey);
+    console.log('GOOGLE_API_KEY length:', apiKey?.length || 0);
+    console.log('Raw Google API key value:', JSON.stringify(apiKey));
+    console.log('===================================');
 
     if (!apiKey || apiKey.trim() === '' || apiKey === 'undefined') {
       console.error('CRITICAL: Google Cloud API Key is not properly loaded');
