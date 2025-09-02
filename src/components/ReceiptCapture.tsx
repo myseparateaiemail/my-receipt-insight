@@ -103,26 +103,26 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       setUploadProgress(60);
       setUploadedReceiptId(receipt.id);
 
-      // Test environment and proceed with OCR regardless to get detailed error info
-      console.log('Testing environment configuration...');
-      const { data: envTest, error: envError } = await supabase.functions.invoke(
-        'test-env',
-        { body: {} }
-      );
+      // Skip environment test - OCR is working, remove this debugging code
+      // console.log('Testing environment configuration...');
+      // const { data: envTest, error: envError } = await supabase.functions.invoke(
+      //   'test-env',
+      //   { body: {} }
+      // );
       
-      console.log('Environment test result:', envTest);
+      // console.log('Environment test result:', envTest);
       
-      if (envError || !envTest?.google_api_key_present) {
-        console.error('Environment test failed:', envError || 'API key not present');
-        console.error('Full env test data:', envTest);
+      // if (envError || !envTest?.google_api_key_present) {
+      //   console.error('Environment test failed:', envError || 'API key not present');
+      //   console.error('Full env test data:', envTest);
         
-        // Show warning but still attempt OCR to get detailed error information
-        toast({
-          title: "Environment Warning",
-          description: `API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}. Attempting OCR for detailed diagnostics...`,
-          variant: "destructive",
-        });
-      }
+      //   // Show warning but still attempt OCR to get detailed error information
+      //   toast({
+      //     title: "Environment Warning",
+      //     description: `API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}. Attempting OCR for detailed diagnostics...`,
+      //     variant: "destructive",
+      //   });
+      // }
 
       // Process OCR with enhanced error handling
       console.log('Starting OCR processing for receipt:', receipt.id);
