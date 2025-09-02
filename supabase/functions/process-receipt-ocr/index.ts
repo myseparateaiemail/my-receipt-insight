@@ -46,7 +46,7 @@ serve(async (req) => {
   }
 
   try {
-    // Enhanced environment debugging
+    // Force function redeploy - v2.1
     const allEnvVars = Deno.env.toObject();
     const apiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
     
