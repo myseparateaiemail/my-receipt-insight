@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import sampleReceipt from "@/assets/sample-receipt.jpg";
+import { ReceiptReview } from "./ReceiptReview";
 
 interface ReceiptCaptureProps {
   onUploadSuccess?: () => void;
@@ -18,6 +19,13 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [uploadedReceiptId, setUploadedReceiptId] = useState<string | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewData, setReviewData] = useState<{
+    imageUrl: string;
+    rawText: string;
+    parsedData: any;
+    receiptId: string;
+  } | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -77,87 +85,50 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       console.log('Image uploaded successfully, URL:', publicUrl);
 
-      // Create receipt record in database
-      const { data: receipt, error: insertError } = await supabase
-        .from('receipts')
-        .insert({
-          user_id: user.id,
-          image_url: publicUrl,
-          receipt_date: new Date().toISOString().split('T')[0],
-          total_amount: 0,
-          processing_status: 'processing'
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error('Database insert error:', insertError);
-        toast({
-          title: "Save Failed",
-          description: "Failed to save receipt to database",
-          variant: "destructive",
-        });
-        return;
-      }
-
       setUploadProgress(60);
-      setUploadedReceiptId(receipt.id);
 
-      // Skip environment test - OCR is working, remove this debugging code
-      // console.log('Testing environment configuration...');
-      // const { data: envTest, error: envError } = await supabase.functions.invoke(
-      //   'test-env',
-      //   { body: {} }
-      // );
-      
-      // console.log('Environment test result:', envTest);
-      
-      // if (envError || !envTest?.google_api_key_present) {
-      //   console.error('Environment test failed:', envError || 'API key not present');
-      //   console.error('Full env test data:', envTest);
-        
-      //   // Show warning but still attempt OCR to get detailed error information
-      //   toast({
-      //     title: "Environment Warning",
-      //     description: `API key status: ${envTest?.google_api_key_present ? 'present' : 'missing'}. Attempting OCR for detailed diagnostics...`,
-      //     variant: "destructive",
-      //   });
-      // }
-
-      // Process OCR with enhanced error handling
-      console.log('Starting OCR processing for receipt:', receipt.id);
+      // Process OCR first, then create receipt record only if user approves
+      console.log('Starting OCR processing...');
       const { data: ocrResult, error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
         body: {
-          receiptId: receipt.id,
+          receiptId: 'temp-processing', // Temporary ID for processing
           imageUrl: publicUrl,
         },
       });
 
       if (ocrError) {
         console.error('OCR processing error:', ocrError);
-        console.error('OCR result data:', ocrResult);
-        
-        const errorMessage = ocrError.message || 'Unknown OCR error';
-        const isConfigError = errorMessage.includes('API Key') || errorMessage.includes('not configured');
-        
         toast({
-          title: isConfigError ? "Configuration Error" : "Processing Error",
-          description: isConfigError 
-            ? `OCR setup incomplete: ${errorMessage}`
-            : "Receipt saved but OCR processing failed. You may need to enter details manually.",
+          title: "Processing Error",
+          description: "Failed to process receipt text. Please try again.",
           variant: "destructive",
         });
-      } else {
-        console.log('OCR processing completed successfully');
-        console.log('OCR result:', ocrResult);
-        toast({
-          title: "Success!",
-          description: "Receipt uploaded and processed successfully",
-        });
+        return;
       }
 
+      if (!ocrResult?.success || !ocrResult?.parsedData) {
+        console.error('OCR returned invalid data:', ocrResult);
+        toast({
+          title: "Processing Error", 
+          description: "Could not extract data from receipt. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      console.log('OCR processing completed successfully');
+      console.log('OCR result:', ocrResult);
+      
+      // Set up review data instead of saving immediately
+      setReviewData({
+        imageUrl: publicUrl,
+        rawText: ocrResult.extractedText || '',
+        parsedData: ocrResult.parsedData,
+        receiptId: '' // Will be set when user approves
+      });
+      
       setUploadProgress(100);
-      onUploadSuccess?.();
+      setReviewMode(true);
 
     } catch (error) {
       console.error('Upload failed:', error);
@@ -192,6 +163,108 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     };
     input.click();
   };
+
+  const handleApprove = async (finalData: any) => {
+    if (!user || !reviewData) return;
+
+    try {
+      // Create receipt record in database with approved data
+      const { data: receipt, error: insertError } = await supabase
+        .from('receipts')
+        .insert({
+          user_id: user.id,
+          image_url: reviewData.imageUrl,
+          receipt_date: finalData.receipt_date || new Date().toISOString().split('T')[0],
+          total_amount: finalData.total_amount || 0,
+          subtotal_amount: finalData.subtotal_amount,
+          tax_amount: finalData.tax_amount,
+          store_name: finalData.store_name,
+          store_phone: finalData.store_phone,
+          payment_method: finalData.payment_method,
+          ocr_text: reviewData.rawText,
+          processing_status: 'completed'
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Database insert error:', insertError);
+        toast({
+          title: "Save Failed",
+          description: "Failed to save receipt to database",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Save items
+      if (finalData.items?.length > 0) {
+        const { error: itemsError } = await supabase
+          .from('receipt_items')
+          .insert(
+            finalData.items.map((item: any) => ({
+              receipt_id: receipt.id,
+              item_name: item.item_name,
+              quantity: item.quantity,
+              total_price: item.total_price,
+              unit_price: item.unit_price,
+              product_code: item.product_code,
+              line_number: item.line_number
+            }))
+          );
+
+        if (itemsError) {
+          console.error('Items insert error:', itemsError);
+        }
+      }
+
+      toast({
+        title: "Success!",
+        description: "Receipt approved and saved successfully",
+      });
+
+      setReviewMode(false);
+      setReviewData(null);
+      setCapturedImage(null);
+      onUploadSuccess?.();
+
+    } catch (error) {
+      console.error('Save failed:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save receipt. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleReject = () => {
+    setReviewMode(false);
+    setReviewData(null);
+    setCapturedImage(null);
+    toast({
+      title: "Receipt Rejected",
+      description: "Receipt processing cancelled",
+    });
+  };
+
+  const handleCancel = () => {
+    setReviewMode(false);
+    setReviewData(null);
+  };
+
+  if (reviewMode && reviewData) {
+    return (
+      <ReceiptReview
+        receiptImage={reviewData.imageUrl}
+        rawOcrText={reviewData.rawText}
+        parsedData={reviewData.parsedData}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onCancel={handleCancel}
+      />
+    );
+  }
 
   return (
     <Card className="bg-gradient-to-br from-card to-accent/5">
