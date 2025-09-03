@@ -261,121 +261,310 @@ serve(async (req) => {
 });
 
 function parseReceiptText(text: string): ReceiptData {
+  console.log('Starting receipt parsing with text length:', text.length);
+  
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  console.log('Total lines to process:', lines.length);
   
   const result: ReceiptData = {
     items: [],
   };
 
-  let currentLineNumber = 1;
+  // Identify receipt sections to improve parsing accuracy
+  const sections = identifyReceiptSections(lines);
+  console.log('Identified sections:', sections);
+
+  // Parse store information (header section)
+  parseStoreInfo(lines.slice(0, sections.itemsStart), result);
   
+  // Parse items (between items start and totals start)
+  parseItems(lines.slice(sections.itemsStart, sections.totalsStart), result);
+  
+  // Parse totals and payment info
+  parseTotalsAndPayment(lines.slice(sections.totalsStart), result);
+  
+  // Validate and clean up the parsed data
+  validateParsedData(result);
+  
+  console.log('Final parsed result:', JSON.stringify(result, null, 2));
+  return result;
+}
+
+function identifyReceiptSections(lines: string[]): { itemsStart: number, totalsStart: number } {
+  let itemsStart = 0;
+  let totalsStart = lines.length;
+  
+  // Find where items typically start (after store info, before first item with UPC/price)
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // Look for UPC codes or clear item patterns
+    if (line.match(/^\d{8,15}\s+/) || line.match(/^[A-Z0-9\s]{10,}\s+\d+\.\d{2}$/)) {
+      itemsStart = i;
+      break;
+    }
+    // Grocery section indicators
+    if (line.match(/^\d{2}-[A-Z]+$/)) {
+      itemsStart = i + 1;
+      break;
+    }
+  }
+  
+  // Find where totals start
+  for (let i = itemsStart; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^SUBTOTAL$/i) || line.match(/^H=HST/) || line.match(/^TOTAL$/i)) {
+      totalsStart = i;
+      break;
+    }
+  }
+  
+  return { itemsStart, totalsStart };
+}
+
+function parseStoreInfo(headerLines: string[], result: ReceiptData): void {
+  console.log('Parsing store info from', headerLines.length, 'header lines');
+  
+  for (let i = 0; i < headerLines.length; i++) {
+    const line = headerLines[i];
     
-    // Store name (usually first non-empty line or lines with common store patterns)
+    // Store name - typically first few lines, all caps, business-like
     if (!result.store_name && i < 5) {
-      if (line.match(/^[A-Z\s&]+$/) && line.length > 3 && line.length < 50) {
+      if (line.match(/^[A-Z\s&]{3,50}$/) && !line.match(/^\d/) && line.length > 3) {
         result.store_name = line;
+        console.log('Found store name:', line);
         continue;
       }
     }
 
-    // Store address
-    if (!result.store_address && line.match(/\d+\s+[A-Za-z\s]+(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive)/i)) {
-      result.store_address = line;
-      continue;
-    }
-
-    // Store phone
+    // Store phone - phone number pattern
     if (!result.store_phone && line.match(/\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})/)) {
       result.store_phone = line;
+      console.log('Found store phone:', line);
       continue;
     }
 
-    // Date patterns
-    if (!result.receipt_date && line.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/)) {
-      result.receipt_date = line;
+    // Store address - contains street indicators
+    if (!result.store_address && line.match(/\d+\s+[A-Za-z\s]+(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|way)/i)) {
+      result.store_address = line;
+      console.log('Found store address:', line);
       continue;
-    }
-
-    // Receipt number
-    if (!result.receipt_number && line.match(/(?:receipt|trans|order)[\s#]*(\d+)/i)) {
-      const match = line.match(/(?:receipt|trans|order)[\s#]*(\d+)/i);
-      if (match) result.receipt_number = match[1];
-      continue;
-    }
-
-    // Payment method
-    if (line.match(/(?:cash|card|credit|debit|visa|master|american)/i)) {
-      result.payment_method = line;
-      continue;
-    }
-
-    // Cashier
-    if (line.match(/(?:cashier|clerk|served by):?\s*(.+)/i)) {
-      const match = line.match(/(?:cashier|clerk|served by):?\s*(.+)/i);
-      if (match) result.cashier_name = match[1];
-      continue;
-    }
-
-    // Totals
-    if (line.match(/subtotal/i) && line.match(/\$?(\d+\.?\d*)/)) {
-      const match = line.match(/\$?(\d+\.?\d*)/);
-      if (match) result.subtotal_amount = parseFloat(match[1]);
-      continue;
-    }
-
-    if (line.match(/tax/i) && line.match(/\$?(\d+\.?\d*)/)) {
-      const match = line.match(/\$?(\d+\.?\d*)/);
-      if (match) result.tax_amount = parseFloat(match[1]);
-      continue;
-    }
-
-    if (line.match(/total/i) && line.match(/\$?(\d+\.?\d*)/)) {
-      const match = line.match(/\$?(\d+\.?\d*)/);
-      if (match) result.total_amount = parseFloat(match[1]);
-      continue;
-    }
-
-    if (line.match(/tip/i) && line.match(/\$?(\d+\.?\d*)/)) {
-      const match = line.match(/\$?(\d+\.?\d*)/);
-      if (match) result.tip_amount = parseFloat(match[1]);
-      continue;
-    }
-
-    if (line.match(/discount/i) && line.match(/\$?(\d+\.?\d*)/)) {
-      const match = line.match(/\$?(\d+\.?\d*)/);
-      if (match) result.discount_amount = parseFloat(match[1]);
-      continue;
-    }
-
-    // Items (lines with price patterns)
-    const priceMatch = line.match(/(.+?)\s+\$?(\d+\.?\d*)$/);
-    if (priceMatch && !line.match(/total|tax|subtotal|discount|tip/i)) {
-      const itemName = priceMatch[1].trim();
-      const price = parseFloat(priceMatch[2]);
-      
-      if (itemName.length > 0 && price > 0) {
-        // Try to extract quantity if present
-        let quantity = 1;
-        let cleanItemName = itemName;
-        
-        const qtyMatch = itemName.match(/^(\d+)\s*x?\s*(.+)/i);
-        if (qtyMatch) {
-          quantity = parseInt(qtyMatch[1]);
-          cleanItemName = qtyMatch[2].trim();
-        }
-
-        result.items.push({
-          item_name: cleanItemName,
-          quantity,
-          total_price: price,
-          unit_price: price / quantity,
-          line_number: currentLineNumber++,
-        });
-      }
     }
   }
+}
 
-  return result;
+function parseItems(itemLines: string[], result: ReceiptData): void {
+  console.log('Parsing items from', itemLines.length, 'item lines');
+  let currentLineNumber = 1;
+  
+  for (const line of itemLines) {
+    // Skip obvious non-item lines
+    if (isNonItemLine(line)) {
+      continue;
+    }
+    
+    const item = parseItemLine(line, currentLineNumber);
+    if (item) {
+      result.items.push(item);
+      currentLineNumber++;
+      console.log('Parsed item:', item);
+    }
+  }
+}
+
+function parseItemLine(line: string, lineNumber: number): any | null {
+  // Pattern 1: UPC + Description + Price (most grocery receipts)
+  // Example: "06038300261 NN WHOLE MRJ 1.49"
+  let match = line.match(/^(\d{8,15})\s+(.+?)\s+(\d{1,3}\.\d{2})$/);
+  if (match) {
+    const [, upc, description, priceStr] = match;
+    const price = parseFloat(priceStr);
+    
+    if (isValidPrice(price)) {
+      return {
+        item_name: cleanItemName(description),
+        product_code: upc,
+        quantity: 1,
+        total_price: price,
+        unit_price: price,
+        line_number: lineNumber,
+      };
+    }
+  }
+  
+  // Pattern 2: Description + Price (simple format)
+  // Example: "APPLES 3.99"
+  match = line.match(/^([A-Za-z][A-Za-z0-9\s\-'&.]{2,40})\s+(\d{1,3}\.\d{2})$/);
+  if (match) {
+    const [, description, priceStr] = match;
+    const price = parseFloat(priceStr);
+    
+    if (isValidPrice(price) && isValidItemDescription(description)) {
+      return {
+        item_name: cleanItemName(description),
+        quantity: 1,
+        total_price: price,
+        unit_price: price,
+        line_number: lineNumber,
+      };
+    }
+  }
+  
+  // Pattern 3: Weight-based items
+  // Example: "0.285 kg @ $4.39/kg 1.25"
+  match = line.match(/^(\d+\.?\d*)\s+kg\s+@\s+\$(\d+\.\d{2})\/kg\s+(\d+\.\d{2})$/);
+  if (match) {
+    const [, weightStr, unitPriceStr, totalPriceStr] = match;
+    const weight = parseFloat(weightStr);
+    const unitPrice = parseFloat(unitPriceStr);
+    const totalPrice = parseFloat(totalPriceStr);
+    
+    if (isValidPrice(totalPrice) && weight > 0) {
+      return {
+        item_name: 'PRODUCE ITEM', // Will be updated from previous line context if available
+        quantity: weight,
+        unit_price: unitPrice,
+        total_price: totalPrice,
+        line_number: lineNumber,
+      };
+    }
+  }
+  
+  return null;
+}
+
+function parseTotalsAndPayment(footerLines: string[], result: ReceiptData): void {
+  console.log('Parsing totals and payment from', footerLines.length, 'footer lines');
+  
+  for (const line of footerLines) {
+    // Subtotal
+    let match = line.match(/SUBTOTAL\s+(\d+\.\d{2})/i);
+    if (match && !result.subtotal_amount) {
+      result.subtotal_amount = parseFloat(match[1]);
+      console.log('Found subtotal:', result.subtotal_amount);
+      continue;
+    }
+    
+    // Tax amount
+    match = line.match(/HST.*?(\d+\.\d{2})/i);
+    if (match && !result.tax_amount) {
+      result.tax_amount = parseFloat(match[1]);
+      console.log('Found tax:', result.tax_amount);
+      continue;
+    }
+    
+    // Total
+    match = line.match(/^TOTAL\s+(\d+\.\d{2})/i);
+    if (match && !result.total_amount) {
+      result.total_amount = parseFloat(match[1]);
+      console.log('Found total:', result.total_amount);
+      continue;
+    }
+    
+    // Payment method
+    if (line.match(/DEBIT|CREDIT|CASH|VISA|MASTERCARD/i) && !result.payment_method) {
+      result.payment_method = line;
+      console.log('Found payment method:', line);
+      continue;
+    }
+    
+    // Date/time - look for date patterns
+    match = line.match(/(\d{2}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})/);
+    if (match && !result.receipt_date) {
+      result.receipt_date = match[1];
+      console.log('Found date:', result.receipt_date);
+      continue;
+    }
+  }
+}
+
+function isNonItemLine(line: string): boolean {
+  // Skip lines that are clearly not items
+  const skipPatterns = [
+    /^Welcome/i,
+    /^Thank you/i,
+    /^\d{2}-[A-Z]+$/, // Section headers like "21-GROCERY"
+    /^Card Type:/i,
+    /^Account:/i,
+    /^Trans\./i,
+    /^DateTime:/i,
+    /^Auth #:/i,
+    /^Ref\. #:/i,
+    /^\*{3,}/,
+    /^APPROVED/i,
+    /^PC Optimum/i,
+    /^Points/i,
+    /^Balance/i,
+    /^Retain this/i,
+    /^CAD\$/,
+    /^A\d{20,}/,  // Long alphanumeric strings (payment tokens)
+  ];
+  
+  return skipPatterns.some(pattern => pattern.test(line));
+}
+
+function isValidPrice(price: number): boolean {
+  // Reasonable price bounds for grocery items
+  return price >= 0.01 && price <= 999.99 && !isNaN(price);
+}
+
+function isValidItemDescription(description: string): boolean {
+  // Valid item descriptions should not be...
+  const invalidPatterns = [
+    /^\d+$/, // Just numbers
+    /^[A-Z]{1,2}$/, // Single/double letters
+    /^CAD\$/, // Currency symbols
+    /^\*+$/, // Asterisks
+  ];
+  
+  return !invalidPatterns.some(pattern => pattern.test(description)) && 
+         description.length >= 3 && 
+         description.length <= 50;
+}
+
+function cleanItemName(name: string): string {
+  // Clean up item names
+  return name
+    .replace(/\s+/g, ' ') // Multiple spaces to single
+    .replace(/^MRJ\s*/, '') // Remove MRJ prefix common in some stores
+    .replace(/\s+MRJ$/, '') // Remove MRJ suffix
+    .trim()
+    .toUpperCase();
+}
+
+function validateParsedData(result: ReceiptData): void {
+  console.log('Validating parsed data...');
+  
+  // Remove invalid items
+  result.items = result.items.filter(item => {
+    if (!item.item_name || item.item_name.length < 2) {
+      console.log('Removing item with invalid name:', item);
+      return false;
+    }
+    if (!isValidPrice(item.total_price)) {
+      console.log('Removing item with invalid price:', item);
+      return false;
+    }
+    if (item.quantity <= 0) {
+      console.log('Removing item with invalid quantity:', item);
+      return false;
+    }
+    return true;
+  });
+  
+  // Validate totals if we have them
+  if (result.subtotal_amount && result.tax_amount && result.total_amount) {
+    const calculatedTotal = result.subtotal_amount + result.tax_amount;
+    const difference = Math.abs(calculatedTotal - result.total_amount);
+    if (difference > 0.02) { // Allow 2 cent rounding difference
+      console.log('Warning: Total validation failed', {
+        subtotal: result.subtotal_amount,
+        tax: result.tax_amount,
+        total: result.total_amount,
+        calculated: calculatedTotal,
+        difference
+      });
+    }
+  }
+  
+  console.log(`Validation complete. ${result.items.length} valid items found.`);
 }
