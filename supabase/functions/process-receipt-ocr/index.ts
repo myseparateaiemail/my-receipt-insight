@@ -100,6 +100,9 @@ serve(async (req) => {
       );
     }
 
+    // Check if this is a review mode request (temp ID)
+    const isReviewMode = receiptId === 'temp-processing';
+
     // Download the image from Supabase storage
     const imageResponse = await fetch(imageUrl);
     if (!imageResponse.ok) {
@@ -191,57 +194,64 @@ serve(async (req) => {
     const parsedData = parseReceiptText(extractedText);
     console.log('Parsed receipt data:', JSON.stringify(parsedData));
 
-    // Update the receipt with OCR data
-    const { error: updateError } = await supabaseClient
-      .from('receipts')
-      .update({
-        ocr_text: extractedText,
-        store_name: parsedData.store_name,
-        store_address: parsedData.store_address,
-        store_phone: parsedData.store_phone,
-        receipt_number: parsedData.receipt_number,
-        subtotal_amount: parsedData.subtotal_amount,
-        tax_amount: parsedData.tax_amount,
-        total_amount: parsedData.total_amount || 0,
-        tip_amount: parsedData.tip_amount,
-        discount_amount: parsedData.discount_amount,
-        payment_method: parsedData.payment_method,
-        cashier_name: parsedData.cashier_name,
-        processing_status: 'completed',
-        confidence_score: 0.85,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', receiptId);
+    // Only update database if not in review mode
+    if (!isReviewMode) {
+      console.log('Updating receipt with parsed data...');
+      // Update the receipt with OCR data
+      const { error: updateError } = await supabaseClient
+        .from('receipts')
+        .update({
+          ocr_text: extractedText,
+          store_name: parsedData.store_name,
+          store_address: parsedData.store_address,
+          store_phone: parsedData.store_phone,
+          receipt_number: parsedData.receipt_number,
+          subtotal_amount: parsedData.subtotal_amount,
+          tax_amount: parsedData.tax_amount,
+          total_amount: parsedData.total_amount || 0,
+          tip_amount: parsedData.tip_amount,
+          discount_amount: parsedData.discount_amount,
+          payment_method: parsedData.payment_method,
+          cashier_name: parsedData.cashier_name,
+          processing_status: 'completed',
+          confidence_score: 0.85,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', receiptId);
 
-    if (updateError) {
-      console.error('Error updating receipt:', updateError);
-      throw updateError;
-    }
-
-    // Insert receipt items
-    if (parsedData.items.length > 0) {
-      const itemsToInsert = parsedData.items.map(item => ({
-        receipt_id: receiptId,
-        item_name: item.item_name,
-        quantity: item.quantity || 1,
-        unit_price: item.unit_price,
-        total_price: item.total_price,
-        category: item.category,
-        line_number: item.line_number,
-      }));
-
-      const { error: itemsError } = await supabaseClient
-        .from('receipt_items')
-        .insert(itemsToInsert);
-
-      if (itemsError) {
-        console.error('Error inserting receipt items:', itemsError);
+      if (updateError) {
+        console.error('Error updating receipt:', updateError);
+        throw updateError;
       }
+
+      // Insert receipt items
+      if (parsedData.items.length > 0) {
+        const itemsToInsert = parsedData.items.map(item => ({
+          receipt_id: receiptId,
+          item_name: item.item_name,
+          quantity: item.quantity || 1,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          category: item.category,
+          line_number: item.line_number,
+        }));
+
+        const { error: itemsError } = await supabaseClient
+          .from('receipt_items')
+          .insert(itemsToInsert);
+
+        if (itemsError) {
+          console.error('Error inserting receipt items:', itemsError);
+        }
+      }
+    } else {
+      console.log('Review mode - skipping database update');
     }
 
     return new Response(
       JSON.stringify({
         success: true,
+        reviewMode: isReviewMode,
         extractedText,
         parsedData,
       }),
