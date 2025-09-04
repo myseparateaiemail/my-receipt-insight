@@ -366,11 +366,9 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
   console.log('Parsing items from', itemLines.length, 'item lines');
   let currentLineNumber = 1;
   let currentSection = '';
-  let pendingItemName = '';
   
   for (let i = 0; i < itemLines.length; i++) {
     const line = itemLines[i];
-    const nextLine = i + 1 < itemLines.length ? itemLines[i + 1] : '';
     
     // Track section headers for categorization
     if (line.match(/^\d{2}-[A-Z\s]+$/)) {
@@ -384,114 +382,164 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
       continue;
     }
     
-    const item = parseItemLine(line, currentLineNumber, currentSection, nextLine, pendingItemName);
+    const item = parseMultiLineItem(itemLines, i, currentLineNumber, currentSection);
     if (item) {
       result.items.push(item);
       currentLineNumber++;
       console.log('Parsed item:', item);
-      pendingItemName = ''; // Reset pending name
-    } else if (line.match(/^[A-Z0-9\s]{3,}$/) && !line.match(/^\d/) && nextLine.match(/^\d+\.\d{2}$/)) {
-      // This might be a product name on its own line
-      pendingItemName = line.trim();
+      // Skip the lines we've already processed
+      i = item.lastProcessedIndex || i;
     }
   }
 }
 
-function parseItemLine(line: string, lineNumber: number, currentSection: string = '', nextLine: string = '', pendingItemName: string = ''): any | null {
-  // Pattern 1: UPC + Description + Price (most grocery receipts)
-  // Example: "06038367404 NN BLK BEANS MRJ" followed by "1.69"
-  let match = line.match(/^(\d{8,15})\s+(.+)$/);
-  if (match && nextLine.match(/^\d{1,3}\.\d{2}$/)) {
-    const [, upc, description] = match;
-    const price = parseFloat(nextLine);
-    
-    if (isValidPrice(price)) {
-      return {
-        item_name: cleanItemName(description),
-        product_code: upc,
-        quantity: 1,
-        total_price: price,
-        unit_price: price,
-        line_number: lineNumber,
-        category: mapSectionToCategory(currentSection),
-      };
-    }
-  }
+function parseMultiLineItem(lines: string[], startIndex: number, lineNumber: number, currentSection: string): any | null {
+  const line = lines[startIndex];
+  const nextLine = startIndex + 1 < lines.length ? lines[startIndex + 1] : '';
+  const thirdLine = startIndex + 2 < lines.length ? lines[startIndex + 2] : '';
+  const fourthLine = startIndex + 3 < lines.length ? lines[startIndex + 3] : '';
   
-  // Pattern 2: UPC + Description + Price (single line)
-  match = line.match(/^(\d{8,15})\s+(.+?)\s+(\d{1,3}\.\d{2})$/);
+  // Pattern 1: UPC code followed by product name, then tax code, then price
+  // Example: "05889125222" -> "FINE SUGAR" -> "MRJ" -> "3.49"
+  let match = line.match(/^(\d{8,15})$/);
   if (match) {
-    const [, upc, description, priceStr] = match;
-    const price = parseFloat(priceStr);
+    const upc = match[1];
+    let productName = '';
+    let taxCode = '';
+    let price = 0;
+    let processedIndex = startIndex;
     
-    if (isValidPrice(price)) {
+    // Look ahead for product name, tax code, and price
+    if (nextLine && !nextLine.match(/^\d/) && !nextLine.match(/^[HM]?RQ?$/)) {
+      productName = cleanItemName(nextLine);
+      processedIndex++;
+      
+      // Check if third line is tax code (HMRJ, MRJ, RQ, etc.)
+      if (thirdLine && thirdLine.match(/^[HM]?RQ?$/)) {
+        taxCode = thirdLine;
+        processedIndex++;
+        
+        // Fourth line should be price
+        if (fourthLine && fourthLine.match(/^\d{1,3}\.\d{2}$/)) {
+          price = parseFloat(fourthLine);
+          processedIndex++;
+        }
+      } else if (thirdLine && thirdLine.match(/^\d{1,3}\.\d{2}$/)) {
+        // Price directly after product name
+        price = parseFloat(thirdLine);
+        processedIndex++;
+      }
+    }
+    
+    if (productName && isValidPrice(price)) {
       return {
-        item_name: cleanItemName(description),
+        item_name: productName,
         product_code: upc,
         quantity: 1,
         total_price: price,
         unit_price: price,
         line_number: lineNumber,
         category: mapSectionToCategory(currentSection),
+        lastProcessedIndex: processedIndex
       };
     }
   }
   
-  // Pattern 3: PLU code + Description (for produce)
-  // Example: "4082 ONION RED"
-  match = line.match(/^(\d{4})\s+(.+)$/);
-  if (match && nextLine.match(/^\d{1,3}\.\d{2}$/)) {
-    const [, plu, description] = match;
-    const price = parseFloat(nextLine);
+  // Pattern 2: PLU code followed by product name, then weight info
+  // Example: "4082" -> "ONION RED" -> "MRJ" -> "0.310 kg @ $5.49/kg" -> "1.70"
+  match = line.match(/^(\d{4})$/);
+  if (match) {
+    const plu = match[1];
+    let productName = '';
+    let weight = 1;
+    let unitPrice = 0;
+    let totalPrice = 0;
+    let processedIndex = startIndex;
     
-    if (isValidPrice(price)) {
+    if (nextLine && !nextLine.match(/^\d/) && !nextLine.match(/^[HM]?RQ?$/)) {
+      productName = cleanItemName(nextLine);
+      processedIndex++;
+      
+      // Skip tax code if present
+      let weightLine = thirdLine;
+      if (thirdLine && thirdLine.match(/^[HM]?RQ?$/)) {
+        weightLine = fourthLine;
+        processedIndex++;
+      }
+      
+      // Check for weight pattern
+      if (weightLine) {
+        const weightMatch = weightLine.match(/^(\d+\.?\d*)\s+kg\s+@\s+\$(\d+\.\d{2})\/kg$/);
+        if (weightMatch) {
+          weight = parseFloat(weightMatch[1]);
+          unitPrice = parseFloat(weightMatch[2]);
+          processedIndex++;
+          
+          // Price should be on next line
+          const priceLine = lines[processedIndex + 1];
+          if (priceLine && priceLine.match(/^\d{1,3}\.\d{2}$/)) {
+            totalPrice = parseFloat(priceLine);
+            processedIndex++;
+          }
+        } else if (weightLine.match(/^\d{1,3}\.\d{2}$/)) {
+          // Direct price
+          totalPrice = parseFloat(weightLine);
+          unitPrice = totalPrice;
+          processedIndex++;
+        }
+      }
+    }
+    
+    if (productName && isValidPrice(totalPrice)) {
       return {
-        item_name: cleanItemName(description),
+        item_name: productName,
         product_code: plu,
-        quantity: 1,
-        total_price: price,
-        unit_price: price,
-        line_number: lineNumber,
-        category: mapSectionToCategory(currentSection),
-      };
-    }
-  }
-  
-  // Pattern 4: Weight-based items with previous item name
-  // Example: "0.240 kg @ $5.49/kg" followed by "1.32"
-  match = line.match(/^(\d+\.?\d*)\s+kg\s+@\s+\$(\d+\.\d{2})\/kg$/);
-  if (match && nextLine.match(/^\d{1,3}\.\d{2}$/)) {
-    const [, weightStr, unitPriceStr] = match;
-    const weight = parseFloat(weightStr);
-    const unitPrice = parseFloat(unitPriceStr);
-    const totalPrice = parseFloat(nextLine);
-    
-    if (isValidPrice(totalPrice) && weight > 0) {
-      return {
-        item_name: pendingItemName || 'PRODUCE ITEM',
         quantity: weight,
-        unit_price: unitPrice,
         total_price: totalPrice,
+        unit_price: unitPrice,
         line_number: lineNumber,
         category: mapSectionToCategory(currentSection),
+        lastProcessedIndex: processedIndex
       };
     }
   }
   
-  // Pattern 5: Description + Price (simple format)
-  match = line.match(/^([A-Za-z][A-Za-z0-9\s\-'&.]{2,40})\s+(\d{1,3}\.\d{2})$/);
+  // Pattern 3: Product name with price on same line followed by tax code
+  // Example: "ORGNC LETTUCE MRJ 3.99"
+  match = line.match(/^(.+?)\s+([HM]?RQ?)\s+(\d{1,3}\.\d{2})$/);
   if (match) {
-    const [, description, priceStr] = match;
+    const [, productName, taxCode, priceStr] = match;
     const price = parseFloat(priceStr);
     
-    if (isValidPrice(price) && isValidItemDescription(description)) {
+    if (isValidPrice(price) && isValidItemDescription(productName)) {
       return {
-        item_name: cleanItemName(description),
+        item_name: cleanItemName(productName),
         quantity: 1,
         total_price: price,
         unit_price: price,
         line_number: lineNumber,
         category: mapSectionToCategory(currentSection),
+        lastProcessedIndex: startIndex
+      };
+    }
+  }
+  
+  // Pattern 4: Single line with UPC, name, and price
+  match = line.match(/^(\d{8,15})\s+(.+?)\s+([HM]?RQ?)\s+(\d{1,3}\.\d{2})$/);
+  if (match) {
+    const [, upc, productName, taxCode, priceStr] = match;
+    const price = parseFloat(priceStr);
+    
+    if (isValidPrice(price)) {
+      return {
+        item_name: cleanItemName(productName),
+        product_code: upc,
+        quantity: 1,
+        total_price: price,
+        unit_price: price,
+        line_number: lineNumber,
+        category: mapSectionToCategory(currentSection),
+        lastProcessedIndex: startIndex
       };
     }
   }
@@ -585,6 +633,14 @@ function isNonItemLine(line: string): boolean {
     /^Retain this/i,
     /^CAD\$/,
     /^A\d{20,}/,  // Long alphanumeric strings (payment tokens)
+    /^[HM]?RQ?$/, // Tax codes on their own line
+    /^good$/i, // Superstore specific
+    /^ARCP:/i, // Discount lines
+    /^big on fresh/i,
+    /^low on price/i,
+    /^Interac/i,
+    /^DEBIT TND/i,
+    /^\d{10,}$/, // Long number strings
   ];
   
   return skipPatterns.some(pattern => pattern.test(line));
@@ -610,11 +666,12 @@ function isValidItemDescription(description: string): boolean {
 }
 
 function cleanItemName(name: string): string {
-  // Clean up item names
+  // Clean up item names and remove tax codes
   return name
     .replace(/\s+/g, ' ') // Multiple spaces to single
-    .replace(/^MRJ\s*/, '') // Remove MRJ prefix common in some stores
-    .replace(/\s+MRJ$/, '') // Remove MRJ suffix
+    .replace(/\s+[HM]?RQ?\s*$/, '') // Remove tax codes at end
+    .replace(/^[HM]?RQ?\s*/, '') // Remove tax codes at start
+    .replace(/\s+\d+\.\d{2}\s*$/, '') // Remove prices that might be embedded
     .trim()
     .toUpperCase();
 }
@@ -654,6 +711,20 @@ function validateParsedData(result: ReceiptData): void {
     }
   }
   
+    // Calculate subtotal if not found but we have items
+    if (!result.subtotal_amount && result.items.length > 0) {
+      result.subtotal_amount = result.items.reduce((sum, item) => sum + item.total_price, 0);
+      result.subtotal_amount = Math.round(result.subtotal_amount * 100) / 100;
+      console.log('Calculated subtotal from items:', result.subtotal_amount);
+    }
+    
+    // Calculate total if not found but we have subtotal and tax
+    if (!result.total_amount && result.subtotal_amount && result.tax_amount !== undefined) {
+      result.total_amount = result.subtotal_amount + (result.tax_amount || 0);
+      result.total_amount = Math.round(result.total_amount * 100) / 100;
+      console.log('Calculated total from subtotal + tax:', result.total_amount);
+    }
+
   console.log(`Validation complete. ${result.items.length} valid items found.`);
 }
 
@@ -665,6 +736,8 @@ function mapSectionToCategory(section: string): string {
     'BAKERY COMMERCIAL': 'Bakery',
     'BAKERY': 'Bakery',
     'MEAT': 'Meats',
+    'MEATS': 'Meats',
+    'NEATS': 'Meats', // Superstore specific typo
     'SEAFOOD': 'Seafood',
     'FROZEN': 'Frozen',
     'DELI': 'Deli',
@@ -672,6 +745,9 @@ function mapSectionToCategory(section: string): string {
     'HOUSEHOLD': 'Household',
     'BEVERAGES': 'Beverages',
     'SNACKS': 'Snacks',
+    'CANNED GOODS': 'Canned Goods',
+    'CONDIMENTS': 'Condiments & Sauces',
+    'SPICES': 'Spices & Seasonings',
   };
   
   return sectionMap[section.toUpperCase()] || 'Pantry';
