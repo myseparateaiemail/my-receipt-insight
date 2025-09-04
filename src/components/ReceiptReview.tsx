@@ -16,6 +16,7 @@ interface ParsedReceiptData {
     total_price: number;
     unit_price: number;
     line_number?: number;
+    category?: string;
   }>;
   store_name?: string;
   store_phone?: string;
@@ -237,9 +238,10 @@ export const ReceiptReview = ({
                   {editedData.items.map((item, index) => (
                     <div key={index} className="p-3 bg-muted/10 rounded border space-y-2">
                       {editingItem === index ? (
-                        <div className="space-y-2">
-                          <div className="flex gap-2">
-                            <div className="flex-1">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 gap-2">
+                            <div>
+                              <Label className="text-xs">Item Name</Label>
                               <Input
                                 value={item.item_name}
                                 onChange={(e) => updateItem(index, "item_name", e.target.value)}
@@ -247,24 +249,70 @@ export const ReceiptReview = ({
                                 className="h-8"
                               />
                             </div>
-                            <div className="w-20">
+                            <div>
+                              <Label className="text-xs">SKU/Product Code</Label>
                               <Input
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => updateItem(index, "quantity", parseFloat(e.target.value))}
-                                placeholder="Qty"
+                                value={item.product_code || ""}
+                                onChange={(e) => updateItem(index, "product_code", e.target.value)}
+                                placeholder="UPC/PLU code"
                                 className="h-8"
                               />
                             </div>
-                            <div className="w-24">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={item.total_price}
-                                onChange={(e) => updateItem(index, "total_price", parseFloat(e.target.value))}
-                                placeholder="Price"
-                                className="h-8"
-                              />
+                            <div>
+                              <Label className="text-xs">Category</Label>
+                              <select
+                                value={item.category || ""}
+                                onChange={(e) => updateItem(index, "category", e.target.value)}
+                                className="w-full h-8 px-3 border border-input bg-background text-sm rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                <option value="">Select category</option>
+                                <option value="Bakery">Bakery</option>
+                                <option value="Baking Supplies">Baking Supplies</option>
+                                <option value="Beverages">Beverages</option>
+                                <option value="Canned Goods">Canned Goods</option>
+                                <option value="Condiments & Sauces">Condiments & Sauces</option>
+                                <option value="Cosmetics & Pharmacy">Cosmetics & Pharmacy</option>
+                                <option value="Dairy">Dairy</option>
+                                <option value="Deli">Deli</option>
+                                <option value="Frozen">Frozen</option>
+                                <option value="Garden">Garden</option>
+                                <option value="Health">Health</option>
+                                <option value="Household">Household</option>
+                                <option value="International Foods">International Foods</option>
+                                <option value="Meats">Meats</option>
+                                <option value="Natural Foods">Natural Foods</option>
+                                <option value="Pantry">Pantry</option>
+                                <option value="Pasta & Grains">Pasta & Grains</option>
+                                <option value="Produce">Produce</option>
+                                <option value="Ready Made">Ready Made</option>
+                                <option value="Seafood">Seafood</option>
+                                <option value="Snacks">Snacks</option>
+                                <option value="Spices & Seasonings">Spices & Seasonings</option>
+                              </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <Label className="text-xs">Quantity</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.quantity}
+                                  onChange={(e) => updateItem(index, "quantity", parseFloat(e.target.value))}
+                                  placeholder="Qty"
+                                  className="h-8"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Total Price</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.total_price}
+                                  onChange={(e) => updateItem(index, "total_price", parseFloat(e.target.value))}
+                                  placeholder="Price"
+                                  className="h-8"
+                                />
+                              </div>
                             </div>
                           </div>
                           <div className="flex gap-2">
@@ -274,6 +322,7 @@ export const ReceiptReview = ({
                               onClick={() => setEditingItem(null)}
                             >
                               <Check className="h-3 w-3" />
+                              Save
                             </Button>
                             <Button
                               variant="outline"
@@ -281,6 +330,7 @@ export const ReceiptReview = ({
                               onClick={() => removeItem(index)}
                             >
                               <X className="h-3 w-3" />
+                              Remove
                             </Button>
                           </div>
                         </div>
@@ -288,6 +338,16 @@ export const ReceiptReview = ({
                         <div className="flex items-center justify-between">
                           <div className="flex-1">
                             <div className="font-medium text-sm">{item.item_name}</div>
+                            <div className="text-xs text-muted-foreground flex gap-2">
+                              {item.product_code && (
+                                <span>SKU: {item.product_code}</span>
+                              )}
+                              {item.category && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {item.category}
+                                </Badge>
+                              )}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               Qty: {item.quantity} × ${item.unit_price?.toFixed(2) || (item.total_price / item.quantity).toFixed(2)}
                             </div>
