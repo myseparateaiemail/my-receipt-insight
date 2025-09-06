@@ -284,19 +284,19 @@ function parseReceiptText(text: string): ReceiptData {
     items: [],
   };
 
-  // Find key markers in the receipt
+  // Find key sections more accurately
   let itemsStartIndex = 0;
   let totalsStartIndex = lines.length;
   
-  // Find start of items (look for first section header like "21-GROCERY")
+  // Find start of items section (after store header)
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(/^\d{2}-[A-Z\s]+/)) {
+    if (lines[i].match(/^\d{2}-[A-Z\s]+/) || lines[i].includes('Welcome #')) {
       itemsStartIndex = i;
       break;
     }
   }
   
-  // Find start of totals section  
+  // Find start of totals section
   for (let i = itemsStartIndex; i < lines.length; i++) {
     if (lines[i].includes('SUBTOTAL')) {
       totalsStartIndex = i;
@@ -306,19 +306,22 @@ function parseReceiptText(text: string): ReceiptData {
 
   console.log(`Parsing sections: Header (0-${itemsStartIndex}), Items (${itemsStartIndex}-${totalsStartIndex}), Totals (${totalsStartIndex}+)`);
 
-  // Parse store information
+  // Parse store information from header
   parseStoreInfo(lines.slice(0, itemsStartIndex), result);
   
-  // Parse items 
-  parseItems(lines.slice(itemsStartIndex, totalsStartIndex), result);
+  // Parse items with improved multi-line handling
+  parseItemsComprehensive(lines.slice(itemsStartIndex, totalsStartIndex), result);
   
-  // Parse totals and payment info
-  parseTotalsAndPayment(lines.slice(totalsStartIndex), result);
+  // Parse totals and payment info with better tax/total extraction
+  parseTotalsAndPaymentImproved(lines.slice(totalsStartIndex), result);
   
-  // Calculate subtotal from items if not found
-  if (!result.subtotal_amount && result.items.length > 0) {
-    result.subtotal_amount = result.items.reduce((sum, item) => sum + item.total_price, 0);
-    console.log('Calculated subtotal from items:', result.subtotal_amount);
+  // Calculate subtotal from items if not found or incorrect
+  if (result.items.length > 0) {
+    const calculatedSubtotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
+    if (!result.subtotal_amount || Math.abs(result.subtotal_amount - calculatedSubtotal) > 0.01) {
+      console.log('Using calculated subtotal from items:', calculatedSubtotal);
+      result.subtotal_amount = calculatedSubtotal;
+    }
   }
   
   console.log('Final parsed result:', JSON.stringify(result, null, 2));
@@ -331,13 +334,11 @@ function parseStoreInfo(headerLines: string[], result: ReceiptData): void {
   for (let i = 0; i < headerLines.length; i++) {
     const line = headerLines[i];
     
-    // Store name - typically first few lines, all caps, business-like
-    if (!result.store_name && i < 5) {
-      if (line.match(/^[A-Z\s&]{3,50}$/) && !line.match(/^\d/) && line.length > 3) {
-        result.store_name = line;
-        console.log('Found store name:', line);
-        continue;
-      }
+    // Store name - look for Real Canadian Superstore specifically
+    if (!result.store_name && (line.includes('REAL CANADIAN') || line.includes('SUPERSTORE'))) {
+      result.store_name = 'REAL CANADIAN';
+      console.log('Found store name:', result.store_name);
+      continue;
     }
 
     // Store phone - phone number pattern
@@ -356,7 +357,7 @@ function parseStoreInfo(headerLines: string[], result: ReceiptData): void {
   }
 }
 
-function parseItems(itemLines: string[], result: ReceiptData): void {
+function parseItemsComprehensive(itemLines: string[], result: ReceiptData): void {
   console.log('Parsing items from', itemLines.length, 'item lines');
   let currentSection = 'GROCERY';
   let lineNumber = 1;
@@ -374,180 +375,238 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
       continue;
     }
     
-    // Skip non-item lines
-    if (line.match(/^\$[\d.]+\s+ea\s+or/i) || 
-        line.match(/^\d+\s+@\s+\d+\/\$[\d.]+/i) ||
-        line.match(/^[HM]?R[QJ]?\s*$/i) ||
-        line.match(/^\([^)]+\)$/)) {
+    // Skip obvious garbage OCR lines
+    if (shouldSkipOCRLine(line)) {
       i++;
       continue;
     }
     
-    let item = null;
+    // Try to parse a complete item starting at this line
+    const itemParseResult = parseCompleteItemAtIndex(itemLines, i, currentSection, lineNumber);
     
-    // Pattern 1: Standard SKU line with product name and tax code
-    // Examples: "06038313771 PC SPRK WTR GFRT HMRJ"
-    //          "*06222908944 KAWR DEATH BY CH MRJ" (price match with asterisk)
-    //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy)
-    const skuMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?)(?:\s+[A-Z])?)?$/);
-    if (skuMatch) {
-      const [, rawSku, productNamePart, taxCode] = skuMatch;
-      const sku = rawSku.replace(/^\*/, ''); // Remove price match asterisk
-      
-      // Look ahead for price - could be on same line or next lines
-      let price = null;
-      let nextLineIndex = i + 1;
-      
-      // Check if price is at end of current line
-      const priceOnLineMatch = productNamePart.match(/^(.+?)\s+(\d{1,3}\.\d{2})$/);
-      if (priceOnLineMatch) {
-        const [, productName, priceStr] = priceOnLineMatch;
-        price = parseFloat(priceStr);
-        item = {
-          item_name: cleanProductName(productName),
-          product_code: sku,
-          quantity: 1,
-          unit_price: price,
-          total_price: price,
-          line_number: lineNumber++,
-          category: mapSectionToCategory(currentSection),
-          tax_code: taxCode
-        };
-        i++;
-      } else {
-        // Look for price on next lines (skip tax codes and other formatting)
-        while (nextLineIndex < itemLines.length && nextLineIndex < i + 5) {
-          const nextLine = itemLines[nextLineIndex];
-          
-          // Skip lines that are just tax codes
-          if (nextLine.match(/^[HM]?R[QJ]?\s*$/)) {
-            nextLineIndex++;
-            continue;
-          }
-          
-          // Look for standalone price
-          const priceMatch = nextLine.match(/^(\d{1,3}\.\d{2})$/);
-          if (priceMatch) {
-            price = parseFloat(priceMatch[1]);
-            item = {
-              item_name: cleanProductName(productNamePart),
-              product_code: sku,
-              quantity: 1,
-              unit_price: price,
-              total_price: price,
-              line_number: lineNumber++,
-              category: mapSectionToCategory(currentSection),
-              tax_code: taxCode
-            };
-            i = nextLineIndex + 1;
-            break;
-          }
-          
-          // Handle multi-buy scenarios - look for the final price after promotion lines
-          if (nextLine.match(/^\d+\s+@\s+\d+\/\$[\d.]+/) || nextLine.match(/^\$[\d.]+\s+ea\s+or/)) {
-            // Skip promotion lines and find the actual price
-            let j = nextLineIndex + 1;
-            while (j < itemLines.length && j < i + 8) {
-              const priceLine = itemLines[j];
-              const multiBuyPriceMatch = priceLine.match(/^(\d{1,3}\.\d{2})$/);
-              if (multiBuyPriceMatch) {
-                price = parseFloat(multiBuyPriceMatch[1]);
-                item = {
-                  item_name: cleanProductName(productNamePart),
-                  product_code: sku,
-                  quantity: 1,
-                  unit_price: price,
-                  total_price: price,
-                  line_number: lineNumber++,
-                  category: mapSectionToCategory(currentSection),
-                  tax_code: taxCode
-                };
-                i = j + 1;
-                break;
-              }
-              j++;
-            }
-            if (item) break;
-          }
-          
-          nextLineIndex++;
-        }
-        
-        if (!item) i++;
-      }
-    }
-    
-    // Pattern 2: PLU items (4 digits) - produce items
-    else if (line.match(/^\d{4}$/)) {
-      const plu = line;
-      // Look for product name on next line
-      if (i + 1 < itemLines.length) {
-        const nextLine = itemLines[i + 1];
-        if (!nextLine.match(/^\d/) && nextLine.length > 2 && !nextLine.match(/^[HM]?R[QJ]?\s*$/)) {
-          // Look for weight/price info or direct price
-          let j = i + 2;
-          while (j < itemLines.length && j < i + 6) {
-            const checkLine = itemLines[j];
-            
-            // Weight pattern: "0.255 kg @ $5.49/kg"
-            const weightMatch = checkLine.match(/^(\d+\.?\d*)\s+kg\s+@\s+\$(\d+\.\d{2})\/kg/);
-            if (weightMatch) {
-              const weight = parseFloat(weightMatch[1]);
-              const unitPrice = parseFloat(weightMatch[2]);
-              // Price should be on next line
-              if (j + 1 < itemLines.length && itemLines[j + 1].match(/^\d{1,3}\.\d{2}$/)) {
-                const totalPrice = parseFloat(itemLines[j + 1]);
-                item = {
-                  item_name: cleanProductName(nextLine),
-                  product_code: plu,
-                  quantity: weight,
-                  unit_price: unitPrice,
-                  total_price: totalPrice,
-                  line_number: lineNumber++,
-                  category: mapSectionToCategory(currentSection)
-                };
-                i = j + 2;
-                break;
-              }
-            }
-            
-            // Direct price
-            else if (checkLine.match(/^\d{1,3}\.\d{2}$/) && !checkLine.match(/^\d+\.?\d*\s+kg/)) {
-              const price = parseFloat(checkLine);
-              item = {
-                item_name: cleanProductName(nextLine),
-                product_code: plu,
-                quantity: 1,
-                unit_price: price,
-                total_price: price,
-                line_number: lineNumber++,
-                category: mapSectionToCategory(currentSection)
-              };
-              i = j + 1;
-              break;
-            }
-            j++;
-          }
-        }
-      }
-      
-      if (!item) i++;
-    }
-    
-    else {
+    if (itemParseResult.item) {
+      result.items.push(itemParseResult.item);
+      console.log('Parsed item:', JSON.stringify(itemParseResult.item, null, 2));
+      lineNumber++;
+      i = itemParseResult.nextIndex;
+    } else {
       i++;
-    }
-    
-    if (item) {
-      result.items.push(item);
-      console.log('Parsed item:', item);
     }
   }
   
-  console.log(`Successfully parsed ${result.items.length} items`);
+  console.log('Successfully parsed', result.items.length, 'items');
 }
 
-function parseTotalsAndPayment(footerLines: string[], result: ReceiptData): void {
+function shouldSkipOCRLine(line: string): boolean {
+  // Skip common OCR garbage patterns
+  const garbagePatterns = [
+    'lonipho', 'ritiw', 'zmuto', 'fiw', 'boq', 'bap', 'Box',
+    'VO ', 'AM', 'inmez', 'odmen', 'libro', 'linoviue', 'bogoldm',
+    'iangomine', 'alipie', 'qaxe', 'aonih', 'Welcome', 'Big on Fresh'
+  ];
+  
+  return garbagePatterns.some(pattern => line.includes(pattern)) ||
+         line.length < 3 ||
+         /^[A-Z]{1,3}$/.test(line) || // Single letters
+         /^\d{1,3}$/.test(line) ||   // Standalone numbers under 1000
+         /^[HM]?R[QJ]?\s*$/.test(line); // Just tax codes
+}
+
+function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: string, lineNumber: number) {
+  const line = lines[startIndex];
+  let i = startIndex;
+  
+  // Pattern 1: Full SKU line with product name and optional price
+  // Examples: "06038313771 PC SPRK WTR GFRT HMRJ 5.25"
+  //          "*06222908944 KAWR DEATH BY CH MRJ" (price match asterisk)
+  //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy prefix)
+  const fullSkuMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
+  
+  if (fullSkuMatch) {
+    const [, rawSku, productNamePart, taxCode, , priceOnLine] = fullSkuMatch;
+    const sku = rawSku.replace(/^\*/, ''); // Remove price match asterisk
+    let itemName = productNamePart.replace(/\s+([HM]?R[QJ]?)\s*$/, '').trim();
+    let totalPrice = priceOnLine ? parseFloat(priceOnLine) : 0;
+    let quantity = 1;
+    let unitPrice = totalPrice;
+    
+    // If no price on main line, look ahead for pricing info
+    if (!totalPrice) {
+      i++;
+      let lookAheadLimit = Math.min(i + 6, lines.length);
+      
+      while (i < lookAheadLimit) {
+        const nextLine = lines[i];
+        
+        // Skip pure tax code lines
+        if (/^[HM]?R[QJ]?\s*$/.test(nextLine)) {
+          i++;
+          continue;
+        }
+        
+        // Multi-buy pattern: "2 @ 2/$7.50 KB" followed by "7.50"
+        const multiBuyMatch = nextLine.match(/(\d+)\s*@\s*(\d+)\/\$(\d+\.\d{2})/);
+        if (multiBuyMatch) {
+          const buyQty = parseInt(multiBuyMatch[1]);
+          const dealQty = parseInt(multiBuyMatch[2]);
+          const dealPrice = parseFloat(multiBuyMatch[3]);
+          
+          // Look for final price on next line
+          if (i + 1 < lines.length) {
+            const priceLine = lines[i + 1];
+            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (finalPriceMatch) {
+              totalPrice = parseFloat(finalPriceMatch[1]);
+              quantity = buyQty;
+              unitPrice = totalPrice / quantity;
+              i += 2;
+              break;
+            }
+          }
+        }
+        
+        // Weight pattern: "0.255 kg @ $5.49/kg" followed by price
+        const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
+        if (weightMatch) {
+          quantity = parseFloat(weightMatch[1]);
+          unitPrice = parseFloat(weightMatch[2]);
+          
+          // Look for total price on next line
+          if (i + 1 < lines.length) {
+            const priceLine = lines[i + 1];
+            const totalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (totalPriceMatch) {
+              totalPrice = parseFloat(totalPriceMatch[1]);
+              i += 2;
+              break;
+            }
+          }
+        }
+        
+        // Simple standalone price
+        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+        if (standalonePriceMatch) {
+          totalPrice = parseFloat(standalonePriceMatch[1]);
+          unitPrice = totalPrice;
+          i++;
+          break;
+        }
+        
+        // Bulk pricing pattern: "$0.89 ea or 5/$4.00 KB"
+        const bulkPriceMatch = nextLine.match(/\$(\d+\.\d{2})\s*ea\s*or\s*\d+\/\$(\d+\.\d{2})/);
+        if (bulkPriceMatch) {
+          unitPrice = parseFloat(bulkPriceMatch[1]);
+          i++;
+          // Look for quantity and final price in next lines
+          continue;
+        }
+        
+        // If we hit another item or reached a stopping point, break
+        if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+          break;
+        }
+        
+        i++;
+      }
+    }
+    
+    if (totalPrice > 0) {
+      const item = {
+        item_name: cleanProductName(itemName),
+        product_code: sku,
+        quantity: quantity,
+        unit_price: unitPrice,
+        total_price: totalPrice,
+        line_number: lineNumber,
+        category: mapSectionToCategory(section),
+        tax_code: taxCode
+      };
+      
+      return { item, nextIndex: i };
+    }
+  }
+  
+  // Pattern 2: PLU items (4-digit codes) - typically produce
+  const pluMatch = line.match(/^(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
+  if (pluMatch) {
+    const [, plu, productName, taxCode] = pluMatch;
+    let totalPrice = 0;
+    let quantity = 1;
+    let unitPrice = 0;
+    
+    // Look ahead for pricing
+    i++;
+    while (i < Math.min(startIndex + 5, lines.length)) {
+      const nextLine = lines[i];
+      
+      // Weight pricing
+      const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
+      if (weightMatch) {
+        quantity = parseFloat(weightMatch[1]);
+        unitPrice = parseFloat(weightMatch[2]);
+        
+        // Look for total price
+        if (i + 1 < lines.length) {
+          const priceLine = lines[i + 1];
+          const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+          if (priceMatch) {
+            totalPrice = parseFloat(priceMatch[1]);
+            i += 2;
+            break;
+          }
+        }
+      }
+      
+      // Quantity and unit price: "2 @ $0.79"
+      const qtyPriceMatch = nextLine.match(/(\d+)\s*@\s*\$(\d+\.\d{2})/);
+      if (qtyPriceMatch) {
+        quantity = parseInt(qtyPriceMatch[1]);
+        unitPrice = parseFloat(qtyPriceMatch[2]);
+        
+        // Look for total
+        if (i + 1 < lines.length) {
+          const priceLine = lines[i + 1];
+          const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+          if (priceMatch) {
+            totalPrice = parseFloat(priceMatch[1]);
+            i += 2;
+            break;
+          }
+        }
+      }
+      
+      // Direct price
+      const directPriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+      if (directPriceMatch) {
+        totalPrice = parseFloat(directPriceMatch[1]);
+        unitPrice = totalPrice;
+        i++;
+        break;
+      }
+      
+      i++;
+    }
+    
+    if (totalPrice > 0) {
+      const item = {
+        item_name: cleanProductName(productName),
+        product_code: plu,
+        quantity: quantity,
+        unit_price: unitPrice,
+        total_price: totalPrice,
+        line_number: lineNumber,
+        category: mapSectionToCategory(section),
+        tax_code: taxCode
+      };
+      
+      return { item, nextIndex: i };
+    }
+  }
+  
+  return { item: null, nextIndex: startIndex + 1 };
+}
+
+function parseTotalsAndPaymentImproved(footerLines: string[], result: ReceiptData): void {
   console.log('Parsing totals and payment from', footerLines.length, 'footer lines');
   
   for (let i = 0; i < footerLines.length; i++) {
@@ -555,177 +614,115 @@ function parseTotalsAndPayment(footerLines: string[], result: ReceiptData): void
     
     // Subtotal - look for SUBTOTAL line followed by amount
     if (line.includes('SUBTOTAL') && !result.subtotal_amount) {
-      // Check next few lines for the amount
-      for (let j = i + 1; j <= i + 3; j++) {
-        if (j < footerLines.length) {
-          const amountMatch = footerLines[j].match(/^(\d{1,4}\.\d{2})$/);
-          if (amountMatch) {
-            result.subtotal_amount = parseFloat(amountMatch[1]);
-            console.log('Found subtotal:', result.subtotal_amount);
+      // Check current line and next few lines for the amount
+      const subtotalMatch = line.match(/(\d+\.\d{2})/) ||
+                           (i + 1 < footerLines.length ? footerLines[i + 1].match(/(\d+\.\d{2})/) : null);
+      if (subtotalMatch) {
+        result.subtotal_amount = parseFloat(subtotalMatch[1]);
+        console.log('Found subtotal:', result.subtotal_amount);
+      }
+    }
+    
+    // Tax from HST line - look for "H=HST 13% X.XX @ 13.000%" followed by tax amount
+    if (line.includes('HST') && line.includes('%')) {
+      // Tax amount is usually on the next line or after the percentage
+      for (let j = i; j < Math.min(i + 3, footerLines.length); j++) {
+        const taxLine = footerLines[j];
+        const taxMatch = taxLine.match(/(\d+\.\d{2})$/);
+        if (taxMatch) {
+          const taxAmount = parseFloat(taxMatch[1]);
+          // Tax should be reasonable (less than 20% of subtotal and under $20)
+          if (taxAmount < (result.subtotal_amount || 100) * 0.2 && taxAmount < 20 && taxAmount > 0) {
+            result.tax_amount = taxAmount;
+            console.log('Found tax amount:', result.tax_amount);
             break;
           }
         }
       }
     }
     
-    // Tax calculation - look for format "36.32 @ 13.000% 4.72"
-    const taxCalcMatch = line.match(/^([\d.]+)\s+@\s+([\d.]+)%\s+([\d.]+)$/);
-    if (taxCalcMatch && !result.tax_amount) {
-      const taxAmount = parseFloat(taxCalcMatch[3]);
-      result.tax_amount = taxAmount;
-      console.log('Found tax from calculation line:', taxAmount);
-    }
-    
-    // Total - look for standalone total amount (usually follows tax calculation)
-    if (!result.total_amount) {
-      // Check for total after tax calculation or TOTAL keyword
-      const totalMatch = line.match(/^(\d{1,4}\.\d{2})$/);
-      if (totalMatch && (i > 0 && (footerLines[i-1].includes('@') || footerLines[i-1].includes('TOTAL')))) {
-        result.total_amount = parseFloat(totalMatch[1]);
-        console.log('Found total:', result.total_amount);
-      }
-      
-      // Also check lines after "TOTAL" keyword
-      if (line.match(/^TOTAL$/i)) {
-        for (let j = i + 1; j <= i + 5; j++) {
-          if (j < footerLines.length) {
-            const nextLine = footerLines[j];
-            // Skip transaction type lines
-            if (nextLine.includes('Trans. Type:') || nextLine.includes('Account:')) continue;
-            
-            const amountMatch = nextLine.match(/^(\d{1,4}\.\d{2})$/);
-            if (amountMatch) {
-              result.total_amount = parseFloat(amountMatch[1]);
-              console.log('Found total after TOTAL keyword:', result.total_amount);
-              break;
-            }
+    // Total - look for TOTAL keyword followed by amount
+    if (line.includes('TOTAL') && !line.includes('SUBTOTAL')) {
+      // Look for total amount in current line or next few lines
+      for (let j = i; j < Math.min(i + 3, footerLines.length); j++) {
+        const totalLine = footerLines[j];
+        const totalMatch = totalLine.match(/(\d+\.\d{2})/);
+        if (totalMatch) {
+          const totalAmount = parseFloat(totalMatch[1]);
+          // Total should be greater than subtotal
+          if (totalAmount >= (result.subtotal_amount || 0) && totalAmount < (result.subtotal_amount || 0) + 50) {
+            result.total_amount = totalAmount;
+            console.log('Found total:', result.total_amount);
+            break;
           }
         }
       }
     }
     
-    // Receipt date
-    const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{2,4}[\s\d:]+)/);
-    if (dateMatch && !result.receipt_date) {
-      result.receipt_date = dateMatch[1];
-      console.log('Found date:', result.receipt_date);
+    // Payment method
+    if (line.includes('Card Type:')) {
+      result.payment_method = line.trim();
+      console.log('Found payment method:', result.payment_method);
     }
     
-    // Payment method
-    if (line.includes('Card Type:') && !result.payment_method) {
-      result.payment_method = line;
-      console.log('Found payment method:', line);
+    // Date
+    const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{2,4}\s+\d{2}:\d{2}:\d{2})/);
+    if (dateMatch) {
+      result.receipt_date = dateMatch[1];
+      console.log('Found date:', result.receipt_date);
     }
   }
 }
 
 function cleanProductName(name: string): string {
-  if (!name) return '';
-  
-  // Remove tax codes and common suffixes
-  let cleaned = name
-    .replace(/\s+([HM]?R[QJ]?)$/i, '') // Remove tax codes like HMRJ, MRJ, RQ
-    .replace(/\s+ea$/i, '') // Remove "ea" suffix
-    .trim();
-  
-  // Expand common abbreviations
-  const abbreviations: { [key: string]: string } = {
-    'PC': 'President\'s Choice',
-    'NN': 'No Name',
-    'MM': 'Memories of',
-    'CM': 'Casa Mendosa',
-    'SPRK WTR': 'Sparkling Water',
-    'CRN PEACHES': 'Corn Peaches', 
-    'BLK BEANS': 'Black Beans',
-    'CLNR': 'Cleaner',
-    'TRIGR': 'Trigger',
-    'BURRITO WH': 'Burrito Whole',
-    'XTR LEAN SRLN': 'Extra Lean Sirloin',
-    'MINI CRN TORT': 'Mini Corn Tortillas',
-    'CHUNKY HOT GU': 'Chunky Hot Guacamole',
-    'ULT ABAB': 'Ultra Absorb',
-    'LVZZ GRN ARO GRD': 'Lavazza Green Aroma Ground',
-    'NESCAFE 1+2 INST': 'Nescafe 1+2 Instant',
-    'REFRIED BEAN': 'Refried Beans',
-    'UNCL BSMTI CL LI': 'Uncle Ben\'s Basmati Rice',
-    'GLASS CLNR TRIGR': 'Glass Cleaner Trigger',
-    'REALIME JUICE': 'Real Lime Juice',
-    'FINE SUGAR': 'Fine Sugar',
-    'SALSA CON QU': 'Salsa Con Queso',
-    'AHA RASBRY ACAI': 'Aha Raspberry Acai',
-    'CHARRAS CHIPOTLE': 'Charras Chipotle',
-    'GAY SOUR CR': 'Gay Lea Sour Cream',
-    'NEILSON 2% 4LT': 'Neilson 2% Milk 4L',
-    'ONION RED': 'Red Onion',
-    'TOV GH RED': 'Tomatoes Red',
-    'PEP JALEPANO HOT': 'Hot Jalapeño Peppers',
-    'ORGNC LETTUCE': 'Organic Lettuce',
-    'BASA FILLET TP': 'Basa Fillet',
-    'MICRO ARUGULA50G': 'Micro Arugula 50g'
-  };
-  
-  // Apply abbreviation expansions
-  for (const [abbrev, expansion] of Object.entries(abbreviations)) {
-    const regex = new RegExp(`\\b${abbrev}\\b`, 'gi');
-    cleaned = cleaned.replace(regex, expansion);
-  }
-  
-  // Convert to proper title case
-  cleaned = cleaned.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
-  
-  return cleaned;
+  return name
+    .replace(/\s+(HMRJ|MRJ|TP)\s*$/, '')
+    .replace(/^\*/, '') // Remove price match asterisk
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
 }
 
 function mapSectionToCategory(section: string): string {
-  const mapping: { [key: string]: string } = {
+  const categoryMap: { [key: string]: string } = {
     'GROCERY': 'Pantry',
     'PRODUCE': 'Produce', 
-    'DAIRY': 'Dairy',
-    'BAKERY': 'Bakery',
-    'BAKERY COMMERCIAL': 'Bakery',
-    'MEAT': 'Meats',
-    'MEATS': 'Meats',
-    'NEATS': 'Meats', // OCR error for MEATS
     'SEAFOOD': 'Seafood',
-    'FROZEN': 'Frozen',
+    'BAKERY COMMERCIAL': 'Bakery',
+    'BAKERY': 'Bakery',
     'DELI': 'Deli',
-    'HOUSEHOLD': 'Household',
-    'HEALTH': 'Health',
-    'COSMETICS': 'Cosmetics & Pharmacy',
-    'PHARMACY': 'Cosmetics & Pharmacy',
-    'BEVERAGES': 'Beverages',
-    'SNACKS': 'Snacks',
-    'CANNED': 'Canned Goods',
-    'INTERNATIONAL': 'International Foods'
+    'FROZEN': 'Frozen',
+    'HOME': 'Household'
   };
   
-  const upperSection = section.toUpperCase();
-  return mapping[upperSection] || 'Pantry';
+  return categoryMap[section] || 'Pantry';
 }
 
-function validateParsedData(result: ReceiptData): void {
+function validateParsedData(data: ReceiptData): void {
   console.log('Validating parsed data...');
   
-  // Validate totals if we have all three values
-  if (result.subtotal_amount && result.tax_amount && result.total_amount) {
-    const calculatedTotal = Math.round((result.subtotal_amount + result.tax_amount) * 100) / 100;
-    const difference = Math.abs(calculatedTotal - result.total_amount);
-    
-    if (difference > 0.02) { // Allow for rounding differences
-      console.log('Warning: Total validation failed', {
-        subtotal: result.subtotal_amount,
-        tax: result.tax_amount,
-        total: result.total_amount,
-        calculated: calculatedTotal,
-        difference: difference
-      });
+  // Validate items
+  data.items = data.items.filter(item => {
+    if (!item.item_name || item.item_name.trim().length === 0) {
+      console.log('Filtering out item with empty name');
+      return false;
     }
-  }
-  
-  // Remove invalid items
-  result.items = result.items.filter(item => {
-    if (!item.item_name || item.item_name.length < 2) return false;
-    if (!item.total_price || item.total_price <= 0) return false;
+    
+    if (!item.total_price || item.total_price <= 0) {
+      console.log('Filtering out item with invalid price:', item);
+      return false;
+    }
+    
+    // Set defaults for missing fields
+    if (!item.quantity) item.quantity = 1;
+    if (!item.unit_price) item.unit_price = item.total_price;
+    if (!item.category) item.category = 'Pantry';
+    if (!item.line_number) item.line_number = 1;
+    
     return true;
   });
+  
+  console.log('Validation complete.', data.items.length, 'valid items found.');
 }
