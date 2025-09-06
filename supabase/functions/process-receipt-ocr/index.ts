@@ -288,9 +288,9 @@ function parseReceiptText(text: string): ReceiptData {
   let itemsStartIndex = 0;
   let totalsStartIndex = lines.length;
   
-  // Find start of items (after store header)
+  // Find start of items (look for first section header like "21-GROCERY")
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(/^\d{2}-[A-Z\s]+/) || lines[i].match(/^\*?\d{8,15}/) || lines[i].match(/^\d{4}$/)) {
+    if (lines[i].match(/^\d{2}-[A-Z\s]+/)) {
       itemsStartIndex = i;
       break;
     }
@@ -298,7 +298,7 @@ function parseReceiptText(text: string): ReceiptData {
   
   // Find start of totals section  
   for (let i = itemsStartIndex; i < lines.length; i++) {
-    if (lines[i].includes('SUBTOTAL') || lines[i].includes('H=HST')) {
+    if (lines[i].includes('SUBTOTAL')) {
       totalsStartIndex = i;
       break;
     }
@@ -374,20 +374,38 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
       continue;
     }
     
-    // Parse actual items - look for SKU patterns
+    // Skip non-item lines
+    if (line.match(/^\$[\d.]+\s+ea\s+or/i) || 
+        line.match(/^\d+\s+@\s+\d+\/\$[\d.]+/i) ||
+        line.match(/^[HM]?R[QJ]?\s*$/i) ||
+        line.match(/^\([^)]+\)$/)) {
+      i++;
+      continue;
+    }
+    
     let item = null;
     
-    // Pattern 1: Full line with SKU + name + tax code
-    // Example: "06038305651 PC SPRK WTR LIME HMRJ"
-    const fullLineMatch = line.match(/^(\*?\d{8,15})\s+(.+?)\s+([HM]?R[QJ]?)$/);
-    if (fullLineMatch) {
-      const [, sku, productName, taxCode] = fullLineMatch;
-      // Look for price on next line
-      if (i + 1 < itemLines.length && itemLines[i + 1].match(/^\d{1,3}\.\d{2}$/)) {
-        const price = parseFloat(itemLines[i + 1]);
+    // Pattern 1: Standard SKU line with product name and tax code
+    // Examples: "06038313771 PC SPRK WTR GFRT HMRJ"
+    //          "*06222908944 KAWR DEATH BY CH MRJ" (price match with asterisk)
+    //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy)
+    const skuMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?)(?:\s+[A-Z])?)?$/);
+    if (skuMatch) {
+      const [, rawSku, productNamePart, taxCode] = skuMatch;
+      const sku = rawSku.replace(/^\*/, ''); // Remove price match asterisk
+      
+      // Look ahead for price - could be on same line or next lines
+      let price = null;
+      let nextLineIndex = i + 1;
+      
+      // Check if price is at end of current line
+      const priceOnLineMatch = productNamePart.match(/^(.+?)\s+(\d{1,3}\.\d{2})$/);
+      if (priceOnLineMatch) {
+        const [, productName, priceStr] = priceOnLineMatch;
+        price = parseFloat(priceStr);
         item = {
           item_name: cleanProductName(productName),
-          product_code: sku.replace('*', ''),
+          product_code: sku,
           quantity: 1,
           unit_price: price,
           total_price: price,
@@ -395,20 +413,80 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
           category: mapSectionToCategory(currentSection),
           tax_code: taxCode
         };
-        i += 2; // Skip price line
+        i++;
+      } else {
+        // Look for price on next lines (skip tax codes and other formatting)
+        while (nextLineIndex < itemLines.length && nextLineIndex < i + 5) {
+          const nextLine = itemLines[nextLineIndex];
+          
+          // Skip lines that are just tax codes
+          if (nextLine.match(/^[HM]?R[QJ]?\s*$/)) {
+            nextLineIndex++;
+            continue;
+          }
+          
+          // Look for standalone price
+          const priceMatch = nextLine.match(/^(\d{1,3}\.\d{2})$/);
+          if (priceMatch) {
+            price = parseFloat(priceMatch[1]);
+            item = {
+              item_name: cleanProductName(productNamePart),
+              product_code: sku,
+              quantity: 1,
+              unit_price: price,
+              total_price: price,
+              line_number: lineNumber++,
+              category: mapSectionToCategory(currentSection),
+              tax_code: taxCode
+            };
+            i = nextLineIndex + 1;
+            break;
+          }
+          
+          // Handle multi-buy scenarios - look for the final price after promotion lines
+          if (nextLine.match(/^\d+\s+@\s+\d+\/\$[\d.]+/) || nextLine.match(/^\$[\d.]+\s+ea\s+or/)) {
+            // Skip promotion lines and find the actual price
+            let j = nextLineIndex + 1;
+            while (j < itemLines.length && j < i + 8) {
+              const priceLine = itemLines[j];
+              const multiBuyPriceMatch = priceLine.match(/^(\d{1,3}\.\d{2})$/);
+              if (multiBuyPriceMatch) {
+                price = parseFloat(multiBuyPriceMatch[1]);
+                item = {
+                  item_name: cleanProductName(productNamePart),
+                  product_code: sku,
+                  quantity: 1,
+                  unit_price: price,
+                  total_price: price,
+                  line_number: lineNumber++,
+                  category: mapSectionToCategory(currentSection),
+                  tax_code: taxCode
+                };
+                i = j + 1;
+                break;
+              }
+              j++;
+            }
+            if (item) break;
+          }
+          
+          nextLineIndex++;
+        }
+        
+        if (!item) i++;
       }
     }
     
-    // Pattern 2: PLU items (4 digits)
+    // Pattern 2: PLU items (4 digits) - produce items
     else if (line.match(/^\d{4}$/)) {
       const plu = line;
       // Look for product name on next line
       if (i + 1 < itemLines.length) {
         const nextLine = itemLines[i + 1];
-        if (!nextLine.match(/^\d/) && nextLine.length > 2) {
-          // Look for weight/price info
+        if (!nextLine.match(/^\d/) && nextLine.length > 2 && !nextLine.match(/^[HM]?R[QJ]?\s*$/)) {
+          // Look for weight/price info or direct price
           let j = i + 2;
-          while (j < itemLines.length && j < i + 5) {
+          while (j < itemLines.length && j < i + 6) {
             const checkLine = itemLines[j];
             
             // Weight pattern: "0.255 kg @ $5.49/kg"
@@ -452,13 +530,17 @@ function parseItems(itemLines: string[], result: ReceiptData): void {
           }
         }
       }
+      
+      if (!item) i++;
+    }
+    
+    else {
+      i++;
     }
     
     if (item) {
       result.items.push(item);
       console.log('Parsed item:', item);
-    } else {
-      i++;
     }
   }
   
@@ -471,7 +553,7 @@ function parseTotalsAndPayment(footerLines: string[], result: ReceiptData): void
   for (let i = 0; i < footerLines.length; i++) {
     const line = footerLines[i];
     
-    // Subtotal - specifically look for SUBTOTAL line
+    // Subtotal - look for SUBTOTAL line followed by amount
     if (line.includes('SUBTOTAL') && !result.subtotal_amount) {
       // Check next few lines for the amount
       for (let j = i + 1; j <= i + 3; j++) {
@@ -486,33 +568,35 @@ function parseTotalsAndPayment(footerLines: string[], result: ReceiptData): void
       }
     }
     
-    // Total - specifically look for TOTAL line
-    if (line.match(/^TOTAL$/i) && !result.total_amount) {
-      // Check next few lines for the amount
-      for (let j = i + 1; j <= i + 3; j++) {
-        if (j < footerLines.length) {
-          const amountMatch = footerLines[j].match(/^(\d{1,4}\.\d{2})$/);
-          if (amountMatch) {
-            result.total_amount = parseFloat(amountMatch[1]);
-            console.log('Found total:', result.total_amount);
-            break;
-          }
-        }
-      }
+    // Tax calculation - look for format "36.32 @ 13.000% 4.72"
+    const taxCalcMatch = line.match(/^([\d.]+)\s+@\s+([\d.]+)%\s+([\d.]+)$/);
+    if (taxCalcMatch && !result.tax_amount) {
+      const taxAmount = parseFloat(taxCalcMatch[3]);
+      result.tax_amount = taxAmount;
+      console.log('Found tax from calculation line:', taxAmount);
     }
     
-    // Tax amount - look for HST calculation
-    const taxMatch = line.match(/H=HST\s+\d+%\s+[\d.]+\s+@\s+[\d.]+%/);
-    if (taxMatch && !result.tax_amount) {
-      // Tax amount is usually on next line after HST line
-      for (let j = i + 1; j <= i + 3; j++) {
-        if (j < footerLines.length) {
-          const taxAmountMatch = footerLines[j].match(/^(\d{1,3}\.\d{2})$/);
-          if (taxAmountMatch) {
-            const taxAmount = parseFloat(taxAmountMatch[1]);
-            if (taxAmount < 100) { // Reasonable tax amount
-              result.tax_amount = taxAmount;
-              console.log('Found tax amount:', taxAmount);
+    // Total - look for standalone total amount (usually follows tax calculation)
+    if (!result.total_amount) {
+      // Check for total after tax calculation or TOTAL keyword
+      const totalMatch = line.match(/^(\d{1,4}\.\d{2})$/);
+      if (totalMatch && (i > 0 && (footerLines[i-1].includes('@') || footerLines[i-1].includes('TOTAL')))) {
+        result.total_amount = parseFloat(totalMatch[1]);
+        console.log('Found total:', result.total_amount);
+      }
+      
+      // Also check lines after "TOTAL" keyword
+      if (line.match(/^TOTAL$/i)) {
+        for (let j = i + 1; j <= i + 5; j++) {
+          if (j < footerLines.length) {
+            const nextLine = footerLines[j];
+            // Skip transaction type lines
+            if (nextLine.includes('Trans. Type:') || nextLine.includes('Account:')) continue;
+            
+            const amountMatch = nextLine.match(/^(\d{1,4}\.\d{2})$/);
+            if (amountMatch) {
+              result.total_amount = parseFloat(amountMatch[1]);
+              console.log('Found total after TOTAL keyword:', result.total_amount);
               break;
             }
           }
