@@ -315,12 +315,17 @@ function parseReceiptText(text: string): ReceiptData {
   // Parse totals and payment info with better tax/total extraction
   parseTotalsAndPaymentImproved(lines.slice(totalsStartIndex), result);
   
-  // Calculate subtotal from items if not found or incorrect
-  if (result.items.length > 0) {
+  // Only calculate subtotal from items if not found on receipt
+  // IMPORTANT: Prefer receipt-stated subtotal as it's authoritative
+  if (!result.subtotal_amount && result.items.length > 0) {
     const calculatedSubtotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
-    if (!result.subtotal_amount || Math.abs(result.subtotal_amount - calculatedSubtotal) > 0.01) {
-      console.log('Using calculated subtotal from items:', calculatedSubtotal);
-      result.subtotal_amount = calculatedSubtotal;
+    console.log('WARNING: Subtotal not found on receipt. Using calculated subtotal from items:', calculatedSubtotal);
+    result.subtotal_amount = calculatedSubtotal;
+  } else if (result.subtotal_amount) {
+    const calculatedSubtotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
+    const difference = Math.abs(result.subtotal_amount - calculatedSubtotal);
+    if (difference > 0.01) {
+      console.log(`WARNING: Receipt subtotal (${result.subtotal_amount}) differs from calculated (${calculatedSubtotal}) by $${difference.toFixed(2)} - likely missing items`);
     }
   }
   
@@ -405,6 +410,11 @@ function shouldSkipOCRLine(line: string): boolean {
     'iangomine', 'alipie', 'qaxe', 'aonih', 'Welcome', 'Big on Fresh'
   ];
   
+  // Skip promotional and points reward lines
+  if (/\d+\s+Pts/i.test(line) || /^Pts\b/i.test(line) || /In-Store Offers/i.test(line) || /Digital [Oo]ffers/i.test(line)) {
+    return true;
+  }
+  
   return garbagePatterns.some(pattern => line.includes(pattern)) ||
          line.length < 3 ||
          /^[A-Z]{1,3}$/.test(line) || // Single letters
@@ -437,6 +447,12 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       
       while (i < lookAheadLimit) {
         const nextLine = lines[i];
+        
+        // Skip promotional/points lines
+        if (/\d+\s+Pts/i.test(nextLine) || /In-Store Offers/i.test(nextLine)) {
+          i++;
+          continue;
+        }
         
         // Skip pure tax code lines
         if (/^[HM]?R[QJ]?\s*$/.test(nextLine)) {
