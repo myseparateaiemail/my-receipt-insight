@@ -518,7 +518,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         if (standalonePriceMatch) {
           totalPrice = parseFloat(standalonePriceMatch[1]);
           unitPrice = totalPrice;
-          i++;
+          i++; // i now points to line after price
           break;
         }
         
@@ -552,8 +552,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         tax_code: taxCode
       };
       
-      // CRITICAL: Always advance at least 1 line to prevent infinite loops
-      const safeNextIndex = Math.max(i + 1, startIndex + 1);
+      // Return i directly - it already points to next line after consumption
+      // Only add +1 if we never moved from startIndex (price was on same line)
+      const safeNextIndex = i > startIndex ? i : startIndex + 1;
       return { item, nextIndex: safeNextIndex };
     }
   }
@@ -631,8 +632,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         tax_code: taxCode
       };
       
-      // CRITICAL: Always advance at least 1 line to prevent infinite loops
-      return { item, nextIndex: Math.max(i, startIndex + 1) };
+      // Return i directly - it already points to next line
+      const safeNextIndex = i > startIndex ? i : startIndex + 1;
+      return { item, nextIndex: safeNextIndex };
     }
   }
   
