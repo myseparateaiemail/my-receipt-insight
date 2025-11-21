@@ -176,7 +176,12 @@ serve(async (req) => {
     }
 
     const visionData = await visionResponse.json();
-    console.log('Vision API response:', JSON.stringify(visionData));
+    const responseSummary = {
+      hasResponses: !!visionData.responses,
+      responseCount: visionData.responses?.length ?? 0,
+      firstTextAnnotationLength: visionData.responses?.[0]?.textAnnotations?.[0]?.description?.length ?? 0,
+    };
+    console.log('Vision API response summary:', JSON.stringify(responseSummary));
 
     if (!visionData.responses || !visionData.responses[0]) {
       throw new Error('No response from Vision API');
@@ -188,7 +193,7 @@ serve(async (req) => {
     }
 
     const extractedText = textAnnotations[0].description;
-    console.log('Extracted text:', extractedText);
+    console.log('Extracted text length:', extractedText.length);
 
     // Parse the extracted text to structured data
     const parsedData = parseReceiptText(extractedText);
@@ -329,7 +334,13 @@ function parseReceiptText(text: string): ReceiptData {
     }
   }
   
-  console.log('Final parsed result:', JSON.stringify(result, null, 2));
+  console.log('Final parsed result summary:', {
+    store_name: result.store_name,
+    itemCount: result.items.length,
+    subtotal: result.subtotal_amount,
+    tax: result.tax_amount,
+    total: result.total_amount,
+  });
   return result;
 }
 
@@ -391,14 +402,17 @@ function parseItemsComprehensive(itemLines: string[], result: ReceiptData): void
     
     if (itemParseResult.item) {
       result.items.push(itemParseResult.item);
-      console.log('Parsed item:', JSON.stringify(itemParseResult.item, null, 2));
+      // Log only a lightweight summary to avoid memory issues on long receipts
+      if (result.items.length <= 20 || result.items.length % 20 === 0) {
+        console.log('Parsed item count:', result.items.length, 'Latest item name:', itemParseResult.item.item_name);
+      }
       lineNumber++;
       i = itemParseResult.nextIndex;
     } else {
       i++;
     }
   }
-  
+
   console.log('Successfully parsed', result.items.length, 'items');
 }
 
@@ -719,27 +733,27 @@ function mapSectionToCategory(section: string): string {
 
 function validateParsedData(data: ReceiptData): void {
   console.log('Validating parsed data...');
-  
+
   // Validate items
   data.items = data.items.filter(item => {
     if (!item.item_name || item.item_name.trim().length === 0) {
       console.log('Filtering out item with empty name');
       return false;
     }
-    
+
     if (!item.total_price || item.total_price <= 0) {
-      console.log('Filtering out item with invalid price:', item);
+      console.log('Filtering out item with invalid price');
       return false;
     }
-    
+
     // Set defaults for missing fields
     if (!item.quantity) item.quantity = 1;
     if (!item.unit_price) item.unit_price = item.total_price;
     if (!item.category) item.category = 'Pantry';
     if (!item.line_number) item.line_number = 1;
-    
+
     return true;
   });
-  
+
   console.log('Validation complete.', data.items.length, 'valid items found.');
 }
