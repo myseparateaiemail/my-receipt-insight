@@ -552,7 +552,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         tax_code: taxCode
       };
       
-      return { item, nextIndex: i };
+      // CRITICAL: Always advance at least 1 line to prevent infinite loops
+      const safeNextIndex = Math.max(i + 1, startIndex + 1);
+      return { item, nextIndex: safeNextIndex };
     }
   }
   
