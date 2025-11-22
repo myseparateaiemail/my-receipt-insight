@@ -440,7 +440,133 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   const line = lines[startIndex];
   let i = startIndex;
   
-  // Pattern 1: Full SKU line with product name and optional price
+  // --- PATTERN 0: SKU on its own line, name on following line ---
+  // Example:
+  //   *06041090120
+  //   TOST CHIPS
+  //   HMRJ
+  //   3.49
+  const skuOnlyMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})$/);
+  if (skuOnlyMatch) {
+    const [, rawSku] = skuOnlyMatch;
+    const sku = rawSku.replace(/^\*/, '');
+    i = startIndex + 1;
+
+    // Expect the immediate next non-skipped line to be the product name
+    let nameLine = '';
+    while (i < lines.length) {
+      const candidate = lines[i];
+      // Stop if we hit something that clearly looks like a new item / section / price
+      if (candidate.match(/^\d{8,15}/) || candidate.match(/^\d{2}-/) || shouldSkipOCRLine(candidate)) {
+        break;
+      }
+      // Standalone price means OCR probably dropped the name – bail out
+      if (/^(\d+\.\d{2})$/.test(candidate)) {
+        break;
+      }
+      nameLine = candidate;
+      i++;
+      break; // For now we only support single-line names here
+    }
+
+    if (nameLine) {
+      let totalPrice = 0;
+      let quantity = 1;
+      let unitPrice = 0;
+      let taxCode: string | undefined;
+
+      // Look ahead for tax code and price information
+      let lookAhead = i;
+      const lookAheadLimit = Math.min(lookAhead + 6, lines.length);
+      while (lookAhead < lookAheadLimit) {
+        const nextLine = lines[lookAhead];
+
+        // Skip promotional / points lines
+        if (/\d+\s+Pts/i.test(nextLine) || /In-Store Offers/i.test(nextLine)) {
+          lookAhead++;
+          continue;
+        }
+
+        // Capture pure tax-code lines but keep scanning for price
+        if (/^([HM]?R[QJ]?)\s*$/.test(nextLine)) {
+          taxCode = nextLine.trim();
+          lookAhead++;
+          continue;
+        }
+
+        // Multi-buy pattern: "2 @ 2/$7.50" followed by total price on next line
+        const multiBuyMatch = nextLine.match(/(\d+)\s*@\s*(\d+)\/\$(\d+\.\d{2})/);
+        if (multiBuyMatch) {
+          const buyQty = parseInt(multiBuyMatch[1]);
+          const dealQty = parseInt(multiBuyMatch[2]);
+          const dealPrice = parseFloat(multiBuyMatch[3]);
+
+          if (lookAhead + 1 < lines.length) {
+            const priceLine = lines[lookAhead + 1];
+            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (finalPriceMatch) {
+              totalPrice = parseFloat(finalPriceMatch[1]);
+              quantity = buyQty; // quantity purchased, not dealQty
+              unitPrice = totalPrice / quantity;
+              lookAhead += 2;
+              break;
+            }
+          }
+        }
+
+        // Weight pattern: "0.255 kg @ $5.49/kg" followed by price
+        const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
+        if (weightMatch) {
+          quantity = parseFloat(weightMatch[1]);
+          unitPrice = parseFloat(weightMatch[2]);
+
+          if (lookAhead + 1 < lines.length) {
+            const priceLine = lines[lookAhead + 1];
+            const totalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (totalPriceMatch) {
+              totalPrice = parseFloat(totalPriceMatch[1]);
+              lookAhead += 2;
+              break;
+            }
+          }
+        }
+
+        // Simple standalone price line
+        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+        if (standalonePriceMatch) {
+          totalPrice = parseFloat(standalonePriceMatch[1]);
+          unitPrice = totalPrice;
+          lookAhead++;
+          break;
+        }
+
+        // If we hit another obvious item / section, stop
+        if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+          break;
+        }
+
+        lookAhead++;
+      }
+
+      if (totalPrice > 0) {
+        const item = {
+          item_name: cleanProductName(nameLine),
+          product_code: sku,
+          quantity,
+          unit_price: unitPrice,
+          total_price: totalPrice,
+          line_number: lineNumber,
+          category: mapSectionToCategory(section),
+          tax_code: taxCode,
+        };
+
+        const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
+        return { item, nextIndex: safeNextIndex };
+      }
+    }
+  }
+  
+  // --- PATTERN 1: Full SKU line with product name and optional price ---
   // Examples: "06038313771 PC SPRK WTR GFRT HMRJ 5.25"
   //          "*06222908944 KAWR DEATH BY CH MRJ" (price match asterisk)
   //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy prefix)
@@ -559,26 +685,48 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
   }
   
-  // Pattern 2: PLU items (4-digit codes) - typically produce
-  const pluMatch = line.match(/^(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
-  if (pluMatch) {
-    const [, plu, productName, taxCode] = pluMatch;
+  // --- PATTERN 2: PLU items (4-digit codes) - typically produce ---
+  // Handle both "4040 LIME" and multi-line variants:
+  //   4040
+  //   LIME
+  const pluInlineMatch = line.match(/^(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
+  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(\d{4})$/) : null;
+
+  if (pluInlineMatch || pluOnlyMatch) {
+    const plu = (pluInlineMatch ? pluInlineMatch[1] : pluOnlyMatch![1]);
+    let productName = pluInlineMatch ? pluInlineMatch[2] : '';
+    let taxCode: string | undefined = pluInlineMatch ? pluInlineMatch[3] : undefined;
     let totalPrice = 0;
     let quantity = 1;
     let unitPrice = 0;
-    
-    // Look ahead for pricing
-    i++;
-    while (i < Math.min(startIndex + 5, lines.length)) {
+
+    i = startIndex + 1;
+
+    // If name was not on the same line, grab it from the next non-skipped line
+    if (!productName) {
+      while (i < lines.length) {
+        const candidate = lines[i];
+        if (candidate.match(/^\d{4}/) || candidate.match(/^\d{2}-/) || shouldSkipOCRLine(candidate)) {
+          break;
+        }
+        if (/^(\d+\.\d{2})$/.test(candidate)) {
+          break;
+        }
+        productName = candidate;
+        i++;
+        break;
+      }
+    }
+
+    // Look ahead for pricing starting from current i
+    while (i < Math.min(startIndex + 6, lines.length)) {
       const nextLine = lines[i];
-      
-      // Weight pricing
+
       const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
       if (weightMatch) {
         quantity = parseFloat(weightMatch[1]);
         unitPrice = parseFloat(weightMatch[2]);
-        
-        // Look for total price
+
         if (i + 1 < lines.length) {
           const priceLine = lines[i + 1];
           const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
@@ -589,14 +737,12 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           }
         }
       }
-      
-      // Quantity and unit price: "2 @ $0.79"
+
       const qtyPriceMatch = nextLine.match(/(\d+)\s*@\s*\$(\d+\.\d{2})/);
       if (qtyPriceMatch) {
         quantity = parseInt(qtyPriceMatch[1]);
         unitPrice = parseFloat(qtyPriceMatch[2]);
-        
-        // Look for total
+
         if (i + 1 < lines.length) {
           const priceLine = lines[i + 1];
           const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
@@ -607,8 +753,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           }
         }
       }
-      
-      // Direct price
+
       const directPriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
       if (directPriceMatch) {
         totalPrice = parseFloat(directPriceMatch[1]);
@@ -616,11 +761,11 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         i++;
         break;
       }
-      
+
       i++;
     }
     
-    if (totalPrice > 0) {
+    if (productName && totalPrice > 0) {
       const item = {
         item_name: cleanProductName(productName),
         product_code: plu,
@@ -632,7 +777,6 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         tax_code: taxCode
       };
       
-      // Return i directly - it already points to next line
       const safeNextIndex = i > startIndex ? i : startIndex + 1;
       return { item, nextIndex: safeNextIndex };
     }
