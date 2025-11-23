@@ -494,6 +494,23 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           continue;
         }
 
+        // Simple "X @ $Y.YY" pattern (like "2 @ $9.99")
+        const simpleMultiBuyMatch = nextLine.match(/^(\d+)\s*@\s*\$(\d+\.\d{2})$/);
+        if (simpleMultiBuyMatch) {
+          quantity = parseInt(simpleMultiBuyMatch[1]);
+          unitPrice = parseFloat(simpleMultiBuyMatch[2]);
+          
+          if (lookAhead + 1 < lines.length) {
+            const priceLine = lines[lookAhead + 1];
+            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (finalPriceMatch) {
+              totalPrice = parseFloat(finalPriceMatch[1]);
+              lookAhead += 2;
+              break;
+            }
+          }
+        }
+
         // Multi-buy pattern: "2 @ 2/$7.50" followed by total price on next line
         const multiBuyMatch = nextLine.match(/(\d+)\s*@\s*(\d+)\/\$(\d+\.\d{2})/);
         if (multiBuyMatch) {
@@ -531,8 +548,8 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           }
         }
 
-        // Simple standalone price line
-        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+        // Simple standalone price line (handle trailing numbers like "8.00 2")
+        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
         if (standalonePriceMatch) {
           totalPrice = parseFloat(standalonePriceMatch[1]);
           unitPrice = totalPrice;
@@ -566,10 +583,91 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
   }
   
+  // --- PATTERN 0.5: SKU with spaces (like "045 8880014 SPINACH 283G") ---
+  const skuWithSpaceMatch = line.match(/^(\d{3,4})\s+(\d{7,8})\s+(.+)/);
+  if (skuWithSpaceMatch) {
+    const [, part1, part2, rest] = skuWithSpaceMatch;
+    const sku = part1 + part2; // Combine the parts
+    
+    // Parse the rest for product name, tax code, and price
+    let productName = rest;
+    let taxCode: string | undefined;
+    let totalPrice = 0;
+    let quantity = 1;
+    let unitPrice = 0;
+    
+    // Check if rest contains tax code and/or price
+    const restMatch = rest.match(/^(.+?)\s+([HM]?R[QJ]?)\s+(\d+\.\d{2})$/);
+    if (restMatch) {
+      productName = restMatch[1];
+      taxCode = restMatch[2];
+      totalPrice = parseFloat(restMatch[3]);
+      unitPrice = totalPrice;
+      
+      const item = {
+        item_name: cleanProductName(productName),
+        product_code: sku,
+        quantity,
+        unit_price: unitPrice,
+        total_price: totalPrice,
+        line_number: lineNumber,
+        category: mapSectionToCategory(section),
+        tax_code: taxCode,
+      };
+      
+      return { item, nextIndex: startIndex + 1 };
+    }
+    
+    // Otherwise look ahead for tax code and price
+    i = startIndex + 1;
+    let lookAhead = i;
+    const lookAheadLimit = Math.min(lookAhead + 4, lines.length);
+    
+    while (lookAhead < lookAheadLimit) {
+      const nextLine = lines[lookAhead];
+      
+      // Capture pure tax-code lines
+      if (/^([HM]?R[QJ]?)\s*$/.test(nextLine)) {
+        taxCode = nextLine.trim();
+        lookAhead++;
+        continue;
+      }
+      
+      // Standalone price
+      const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+      if (standalonePriceMatch) {
+        totalPrice = parseFloat(standalonePriceMatch[1]);
+        unitPrice = totalPrice;
+        lookAhead++;
+        break;
+      }
+      
+      lookAhead++;
+    }
+    
+    if (totalPrice > 0) {
+      const item = {
+        item_name: cleanProductName(productName),
+        product_code: sku,
+        quantity,
+        unit_price: unitPrice,
+        total_price: totalPrice,
+        line_number: lineNumber,
+        category: mapSectionToCategory(section),
+        tax_code: taxCode,
+      };
+      
+      const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
+      return { item, nextIndex: safeNextIndex };
+    }
+  }
+  
   // --- PATTERN 1: Full SKU line with product name and optional price ---
   // Examples: "06038313771 PC SPRK WTR GFRT HMRJ 5.25"
   //          "*06222908944 KAWR DEATH BY CH MRJ" (price match asterisk)
   //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy prefix)
+  //          "06464202330 JAM ZINC GLUCON HRQ 9.79" (HRQ tax code)
+  //          "07965603045 BB US LTN $30 HMRJ" (item name with $)
   const fullSkuMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
   
   if (fullSkuMatch) {
@@ -598,6 +696,23 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         if (/^[HM]?R[QJ]?\s*$/.test(nextLine)) {
           i++;
           continue;
+        }
+        
+        // Simple "X @ $Y.YY" pattern (like "2 @ $9.99")
+        const simpleMultiBuyMatch = nextLine.match(/^(\d+)\s*@\s*\$(\d+\.\d{2})$/);
+        if (simpleMultiBuyMatch) {
+          quantity = parseInt(simpleMultiBuyMatch[1]);
+          unitPrice = parseFloat(simpleMultiBuyMatch[2]);
+          
+          if (i + 1 < lines.length) {
+            const priceLine = lines[i + 1];
+            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (finalPriceMatch) {
+              totalPrice = parseFloat(finalPriceMatch[1]);
+              i += 2;
+              break;
+            }
+          }
         }
         
         // Multi-buy pattern: "2 @ 2/$7.50 KB" followed by "7.50"
@@ -639,8 +754,8 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           }
         }
         
-        // Simple standalone price
-        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+        // Simple standalone price (handle trailing numbers like "8.00 2")
+        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
         if (standalonePriceMatch) {
           totalPrice = parseFloat(standalonePriceMatch[1]);
           unitPrice = totalPrice;
@@ -686,11 +801,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   }
   
   // --- PATTERN 2: PLU items (4-digit codes) - typically produce ---
-  // Handle both "4040 LIME" and multi-line variants:
-  //   4040
-  //   LIME
-  const pluInlineMatch = line.match(/^(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
-  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(\d{4})$/) : null;
+  // Handle "4040 LIME", "to 4664 TOV GH RED", and multi-line variants
+  const pluInlineMatch = line.match(/^(?:to\s+)?(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
+  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(?:to\s+)?(\d{4})$/) : null;
 
   if (pluInlineMatch || pluOnlyMatch) {
     const plu = (pluInlineMatch ? pluInlineMatch[1] : pluOnlyMatch![1]);
