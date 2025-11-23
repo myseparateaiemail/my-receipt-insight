@@ -446,7 +446,8 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   //   TOST CHIPS
   //   HMRJ
   //   3.49
-  const skuOnlyMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})$/);
+  // Also handles: *(2)619150990362 (asterisk + multi-buy prefix)
+  const skuOnlyMatch = line.match(/^(?:\*?\(\d+\))?(\*?\d{8,15})$/);
   if (skuOnlyMatch) {
     const [, rawSku] = skuOnlyMatch;
     const sku = rawSku.replace(/^\*/, '');
@@ -583,10 +584,10 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
   }
   
-  // --- PATTERN 0.5: SKU with spaces (like "045 8880014 SPINACH 283G") ---
-  const skuWithSpaceMatch = line.match(/^(\d{3,4})\s+(\d{7,8})\s+(.+)/);
-  if (skuWithSpaceMatch) {
-    const [, part1, part2, rest] = skuWithSpaceMatch;
+  // --- PATTERN 0.5a: SKU with spaces on same line (like "045 8880014 SPINACH 283G") ---
+  const skuWithSpaceSameLineMatch = line.match(/^(\d{3,4})\s+(\d{7,8})\s+(.+)/);
+  if (skuWithSpaceSameLineMatch) {
+    const [, part1, part2, rest] = skuWithSpaceSameLineMatch;
     const sku = part1 + part2; // Combine the parts
     
     // Parse the rest for product name, tax code, and price
@@ -662,18 +663,117 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
   }
   
+  // --- PATTERN 0.5b: Split SKU on its own line (like "045 8880014"), name on next line ---
+  // Example:
+  //   045 8880014
+  //   SPINACH 283G
+  //   MRJ
+  //   3.00
+  const splitSkuOnlyMatch = line.match(/^(\d{3,4})\s+(\d{7,8})$/);
+  if (splitSkuOnlyMatch) {
+    const [, part1, part2] = splitSkuOnlyMatch;
+    const sku = part1 + part2;
+    i = startIndex + 1;
+
+    // Expect the next non-skipped line to be the product name
+    let nameLine = '';
+    while (i < lines.length) {
+      const candidate = lines[i];
+      // Stop if we hit something that clearly looks like a new item / section / price
+      if (candidate.match(/^\d{8,15}/) || candidate.match(/^\d{3,4}\s+\d{7,8}/) || candidate.match(/^\d{2}-/) || shouldSkipOCRLine(candidate)) {
+        break;
+      }
+      // Standalone price means OCR probably dropped the name
+      if (/^(\d+\.\d{2})$/.test(candidate)) {
+        break;
+      }
+      nameLine = candidate;
+      i++;
+      break;
+    }
+
+    if (nameLine) {
+      let totalPrice = 0;
+      let quantity = 1;
+      let unitPrice = 0;
+      let taxCode: string | undefined;
+
+      // Look ahead for tax code and price information
+      let lookAhead = i;
+      const lookAheadLimit = Math.min(lookAhead + 6, lines.length);
+      while (lookAhead < lookAheadLimit) {
+        const nextLine = lines[lookAhead];
+
+        // Skip promotional / points lines
+        if (/\d+\s+Pts/i.test(nextLine) || /In-Store Offers/i.test(nextLine)) {
+          lookAhead++;
+          continue;
+        }
+
+        // Capture pure tax-code lines
+        if (/^([HM]?R[QJ]?)\s*$/.test(nextLine)) {
+          taxCode = nextLine.trim();
+          lookAhead++;
+          continue;
+        }
+
+        // Standalone price
+        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
+        if (standalonePriceMatch) {
+          totalPrice = parseFloat(standalonePriceMatch[1]);
+          unitPrice = totalPrice;
+          lookAhead++;
+          break;
+        }
+
+        // If we hit another obvious item / section, stop
+        if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{3,4}\s+\d{7,8}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+          break;
+        }
+
+        lookAhead++;
+      }
+
+      if (totalPrice > 0) {
+        const item = {
+          item_name: cleanProductName(nameLine),
+          product_code: sku,
+          quantity,
+          unit_price: unitPrice,
+          total_price: totalPrice,
+          line_number: lineNumber,
+          category: mapSectionToCategory(section),
+          tax_code: taxCode,
+        };
+
+        const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
+        return { item, nextIndex: safeNextIndex };
+      }
+    }
+  }
+  
   // --- PATTERN 1: Full SKU line with product name and optional price ---
   // Examples: "06038313771 PC SPRK WTR GFRT HMRJ 5.25"
   //          "*06222908944 KAWR DEATH BY CH MRJ" (price match asterisk)
   //          "(1)06041008007 LAY'S HONEY BUT HMRJ D" (multi-buy prefix)
   //          "06464202330 JAM ZINC GLUCON HRQ 9.79" (HRQ tax code)
   //          "07965603045 BB US LTN $30 HMRJ" (item name with $)
-  const fullSkuMatch = line.match(/^(?:\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
+  //          "*(2)619150990362 TD EV OLIVE OIL MRJ" (asterisk + multi-buy prefix)
+  const fullSkuMatch = line.match(/^(?:\*?\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
   
   if (fullSkuMatch) {
-    const [, rawSku, productNamePart, taxCode, , priceOnLine] = fullSkuMatch;
+    const [, rawSku, productNamePart, taxCodeMatch, , priceOnLine] = fullSkuMatch;
     const sku = rawSku.replace(/^\*/, ''); // Remove price match asterisk
-    let itemName = productNamePart.replace(/\s+([HM]?R[QJ]?)\s*$/, '').trim();
+    
+    // Clean product name more carefully to preserve all text but remove trailing tax codes
+    let itemName = productNamePart.trim();
+    // Only remove tax code if it's at the very end and matches exactly
+    const trailingTaxMatch = itemName.match(/\s+([HM]?R[QJ]?)\s*$/);
+    if (trailingTaxMatch) {
+      itemName = itemName.substring(0, itemName.length - trailingTaxMatch[0].length).trim();
+    }
+    
+    let taxCode = taxCodeMatch;
     let totalPrice = priceOnLine ? parseFloat(priceOnLine) : 0;
     let quantity = 1;
     let unitPrice = totalPrice;
