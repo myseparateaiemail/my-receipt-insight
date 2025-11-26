@@ -322,15 +322,17 @@ function parseReceiptText(text: string): ReceiptData {
   
   // Only calculate subtotal from items if not found on receipt
   // IMPORTANT: Prefer receipt-stated subtotal as it's authoritative
+  const itemsTotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
+  const discountTotal = result.discount_amount || 0;
+  const netItemsTotal = itemsTotal - discountTotal;
+
   if (!result.subtotal_amount && result.items.length > 0) {
-    const calculatedSubtotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
-    console.log('WARNING: Subtotal not found on receipt. Using calculated subtotal from items:', calculatedSubtotal);
-    result.subtotal_amount = calculatedSubtotal;
+    console.log('WARNING: Subtotal not found on receipt. Using calculated subtotal from items net of discounts:', netItemsTotal);
+    result.subtotal_amount = netItemsTotal;
   } else if (result.subtotal_amount) {
-    const calculatedSubtotal = result.items.reduce((sum, item) => sum + (item.total_price || 0), 0);
-    const difference = Math.abs(result.subtotal_amount - calculatedSubtotal);
+    const difference = Math.abs(result.subtotal_amount - netItemsTotal);
     if (difference > 0.01) {
-      console.log(`WARNING: Receipt subtotal (${result.subtotal_amount}) differs from calculated (${calculatedSubtotal}) by $${difference.toFixed(2)} - likely missing items`);
+      console.log(`WARNING: Receipt subtotal (${result.subtotal_amount}) differs from calculated net of discounts (${netItemsTotal}) by $${difference.toFixed(2)} - likely missing items or discounts`);
     }
   }
   
@@ -393,6 +395,18 @@ function parseItemsComprehensive(itemLines: string[], result: ReceiptData): void
     
     // Skip obvious garbage OCR lines
     if (shouldSkipOCRLine(line)) {
+      i++;
+      continue;
+    }
+
+    // Capture discount lines as receipt-level discounts instead of items
+    const discountMatch = line.match(/^-?(\d+\.\d{2})$/);
+    if (discountMatch && line.trim().startsWith('-')) {
+      const discountValue = parseFloat(discountMatch[1]);
+      if (!isNaN(discountValue) && discountValue > 0) {
+        result.discount_amount = (result.discount_amount || 0) + discountValue;
+        console.log('Captured discount line as receipt-level discount:', -discountValue);
+      }
       i++;
       continue;
     }
@@ -779,107 +793,117 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     let unitPrice = totalPrice;
     
     // If no price on main line, look ahead for pricing info
-    if (!totalPrice) {
-      i++;
-      let lookAheadLimit = Math.min(i + 6, lines.length);
+  if (!totalPrice) {
+    i++;
+    let lookAheadLimit = Math.min(i + 6, lines.length);
+    
+    while (i < lookAheadLimit) {
+      const nextLine = lines[i];
       
-      while (i < lookAheadLimit) {
-        const nextLine = lines[i];
-        
-        // Skip promotional/points lines
-        if (/\d+\s+Pts/i.test(nextLine) || /In-Store Offers/i.test(nextLine)) {
-          i++;
-          continue;
-        }
-        
-        // Skip pure tax code lines
-        if (/^[HM]?R[QJ]?\s*$/.test(nextLine)) {
-          i++;
-          continue;
-        }
-        
-        // Simple "X @ $Y.YY" pattern (like "2 @ $9.99")
-        const simpleMultiBuyMatch = nextLine.match(/^(\d+)\s*@\s*\$(\d+\.\d{2})$/);
-        if (simpleMultiBuyMatch) {
-          quantity = parseInt(simpleMultiBuyMatch[1]);
-          unitPrice = parseFloat(simpleMultiBuyMatch[2]);
-          
-          if (i + 1 < lines.length) {
-            const priceLine = lines[i + 1];
-            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
-            if (finalPriceMatch) {
-              totalPrice = parseFloat(finalPriceMatch[1]);
-              i += 2;
-              break;
-            }
-          }
-        }
-        
-        // Multi-buy pattern: "2 @ 2/$7.50 KB" followed by "7.50"
-        const multiBuyMatch = nextLine.match(/(\d+)\s*@\s*(\d+)\/\$(\d+\.\d{2})/);
-        if (multiBuyMatch) {
-          const buyQty = parseInt(multiBuyMatch[1]);
-          const dealQty = parseInt(multiBuyMatch[2]);
-          const dealPrice = parseFloat(multiBuyMatch[3]);
-          
-          // Look for final price on next line
-          if (i + 1 < lines.length) {
-            const priceLine = lines[i + 1];
-            const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
-            if (finalPriceMatch) {
-              totalPrice = parseFloat(finalPriceMatch[1]);
-              quantity = buyQty;
-              unitPrice = totalPrice / quantity;
-              i += 2;
-              break;
-            }
-          }
-        }
-        
-        // Weight pattern: "0.255 kg @ $5.49/kg" followed by price
-        const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
-        if (weightMatch) {
-          quantity = parseFloat(weightMatch[1]);
-          unitPrice = parseFloat(weightMatch[2]);
-          
-          // Look for total price on next line
-          if (i + 1 < lines.length) {
-            const priceLine = lines[i + 1];
-            const totalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
-            if (totalPriceMatch) {
-              totalPrice = parseFloat(totalPriceMatch[1]);
-              i += 2;
-              break;
-            }
-          }
-        }
-        
-        // Simple standalone price (handle trailing numbers like "8.00 2")
-        const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
-        if (standalonePriceMatch) {
-          totalPrice = parseFloat(standalonePriceMatch[1]);
-          unitPrice = totalPrice;
-          i++; // i now points to line after price
-          break;
-        }
-        
-        // Bulk pricing pattern: "$0.89 ea or 5/$4.00 KB"
-        const bulkPriceMatch = nextLine.match(/\$(\d+\.\d{2})\s*ea\s*or\s*\d+\/\$(\d+\.\d{2})/);
-        if (bulkPriceMatch) {
-          unitPrice = parseFloat(bulkPriceMatch[1]);
-          i++;
-          // Look for quantity and final price in next lines
-          continue;
-        }
-        
-        // If we hit another item or reached a stopping point, break
-        if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
-          break;
-        }
-        
+      // Skip promotional/points lines
+      if (/\d+\s+Pts/i.test(nextLine) || /In-Store Offers/i.test(nextLine)) {
         i++;
+        continue;
       }
+      
+      // Handle "MRJ 5.79" or "HRQ 9.79" style tax + price lines
+      const taxPriceMatch = nextLine.match(/^([HM]?R[QJ]?)\s+(\d+\.\d{2})$/);
+      if (taxPriceMatch) {
+        taxCode = taxPriceMatch[1];
+        totalPrice = parseFloat(taxPriceMatch[2]);
+        unitPrice = totalPrice;
+        i++;
+        break;
+      }
+      
+      // Skip pure tax code lines
+      if (/^[HM]?R[QJ]?\s*$/.test(nextLine)) {
+        i++;
+        continue;
+      }
+      
+      // Simple "X @ $Y.YY" pattern (like "2 @ $9.99")
+      const simpleMultiBuyMatch = nextLine.match(/^(\d+)\s*@\s*\$(\d+\.\d{2})$/);
+      if (simpleMultiBuyMatch) {
+        quantity = parseInt(simpleMultiBuyMatch[1]);
+        unitPrice = parseFloat(simpleMultiBuyMatch[2]);
+        
+        if (i + 1 < lines.length) {
+          const priceLine = lines[i + 1];
+          const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+          if (finalPriceMatch) {
+            totalPrice = parseFloat(finalPriceMatch[1]);
+            i += 2;
+            break;
+          }
+        }
+      }
+      
+      // Multi-buy pattern: "2 @ 2/$7.50 KB" followed by "7.50"
+      const multiBuyMatch = nextLine.match(/(\d+)\s*@\s*(\d+)\/\$(\d+\.\d{2})/);
+      if (multiBuyMatch) {
+        const buyQty = parseInt(multiBuyMatch[1]);
+        const dealQty = parseInt(multiBuyMatch[2]);
+        const dealPrice = parseFloat(multiBuyMatch[3]);
+        
+        // Look for final price on next line
+        if (i + 1 < lines.length) {
+          const priceLine = lines[i + 1];
+          const finalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+          if (finalPriceMatch) {
+            totalPrice = parseFloat(finalPriceMatch[1]);
+            quantity = buyQty;
+            unitPrice = totalPrice / quantity;
+            i += 2;
+            break;
+          }
+        }
+      }
+      
+      // Weight pattern: "0.255 kg @ $5.49/kg" followed by price
+      const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
+      if (weightMatch) {
+        quantity = parseFloat(weightMatch[1]);
+        unitPrice = parseFloat(weightMatch[2]);
+        
+        // Look for total price on next line
+        if (i + 1 < lines.length) {
+          const priceLine = lines[i + 1];
+          const totalPriceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+          if (totalPriceMatch) {
+            totalPrice = parseFloat(totalPriceMatch[1]);
+            i += 2;
+            break;
+          }
+        }
+      }
+      
+      // Simple standalone price (handle trailing numbers like "8.00 2")
+      const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
+      if (standalonePriceMatch) {
+        totalPrice = parseFloat(standalonePriceMatch[1]);
+        unitPrice = totalPrice;
+        i++; // i now points to line after price
+        break;
+      }
+      
+      // Bulk pricing pattern: "$0.89 ea or 5/$4.00 KB"
+      const bulkPriceMatch = nextLine.match(/\$(\d+\.\d{2})\s*ea\s*or\s*\d+\/\$(\d+\.\d{2})/);
+      if (bulkPriceMatch) {
+        unitPrice = parseFloat(bulkPriceMatch[1]);
+        i++;
+        // Look for quantity and final price in next lines
+        continue;
+      }
+      
+      // If we hit another item or reached a stopping point, break
+      if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+        break;
+      }
+      
+      i++;
     }
+  }
     
     if (totalPrice > 0) {
       const item = {
@@ -936,49 +960,59 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     if (!totalPrice) {
       // Look ahead for pricing starting from current i
       while (i < Math.min(startIndex + 6, lines.length)) {
-      const nextLine = lines[i];
+        const nextLine = lines[i];
 
-      const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
-      if (weightMatch) {
-        quantity = parseFloat(weightMatch[1]);
-        unitPrice = parseFloat(weightMatch[2]);
+        // Handle lines like "MRJ 3.99" (tax code + price)
+        const taxPriceMatch = nextLine.match(/^([HM]?R[QJ]?)\s+(\d+\.\d{2})$/);
+        if (taxPriceMatch) {
+          taxCode = taxPriceMatch[1];
+          totalPrice = parseFloat(taxPriceMatch[2]);
+          unitPrice = totalPrice;
+          i++;
+          break;
+        }
 
-        if (i + 1 < lines.length) {
-          const priceLine = lines[i + 1];
-          const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
-          if (priceMatch) {
-            totalPrice = parseFloat(priceMatch[1]);
-            i += 2;
-            break;
+        const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
+        if (weightMatch) {
+          quantity = parseFloat(weightMatch[1]);
+          unitPrice = parseFloat(weightMatch[2]);
+
+          if (i + 1 < lines.length) {
+            const priceLine = lines[i + 1];
+            const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (priceMatch) {
+              totalPrice = parseFloat(priceMatch[1]);
+              i += 2;
+              break;
+            }
           }
         }
-      }
 
-      const qtyPriceMatch = nextLine.match(/(\d+)\s*@\s*\$(\d+\.\d{2})/);
-      if (qtyPriceMatch) {
-        quantity = parseInt(qtyPriceMatch[1]);
-        unitPrice = parseFloat(qtyPriceMatch[2]);
+        const qtyPriceMatch = nextLine.match(/(\d+)\s*@\s*\$(\d+\.\d{2})/);
+        if (qtyPriceMatch) {
+          quantity = parseInt(qtyPriceMatch[1]);
+          unitPrice = parseFloat(qtyPriceMatch[2]);
 
-        if (i + 1 < lines.length) {
-          const priceLine = lines[i + 1];
-          const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
-          if (priceMatch) {
-            totalPrice = parseFloat(priceMatch[1]);
-            i += 2;
-            break;
+          if (i + 1 < lines.length) {
+            const priceLine = lines[i + 1];
+            const priceMatch = priceLine.match(/^(\d+\.\d{2})$/);
+            if (priceMatch) {
+              totalPrice = parseFloat(priceMatch[1]);
+              i += 2;
+              break;
+            }
           }
         }
-      }
 
-      const directPriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
-      if (directPriceMatch) {
-        totalPrice = parseFloat(directPriceMatch[1]);
-        unitPrice = totalPrice;
+        const directPriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
+        if (directPriceMatch) {
+          totalPrice = parseFloat(directPriceMatch[1]);
+          unitPrice = totalPrice;
+          i++;
+          break;
+        }
+
         i++;
-        break;
-      }
-
-      i++;
       }
     }
     
