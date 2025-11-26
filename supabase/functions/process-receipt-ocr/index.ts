@@ -900,18 +900,19 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
   }
   
-  // --- PATTERN 2: PLU items (4-digit codes) - typically produce ---
-  // Handle "4040 LIME", "to 4664 TOV GH RED", and multi-line variants
-  const pluInlineMatch = line.match(/^(?:to\s+)?(\d{4})\s+(.+?)(?:\s+([HM]?R[QJ]?))?$/);
-  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(?:to\s+)?(\d{4})$/) : null;
+  // --- PATTERN 2: PLU items (4-5 digit codes) - typically produce ---
+  // Handle "4040 LIME", "to 4664 TOV GH RED", "94634 ORGNC LETTUCE MRJ 3.99"
+  const pluInlineMatch = line.match(/^(?:to\s+)?(\d{4,5})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+(\d+\.\d{2}))?$/);
+  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(?:to\s+)?(\d{4,5})$/) : null;
 
   if (pluInlineMatch || pluOnlyMatch) {
     const plu = (pluInlineMatch ? pluInlineMatch[1] : pluOnlyMatch![1]);
     let productName = pluInlineMatch ? pluInlineMatch[2] : '';
     let taxCode: string | undefined = pluInlineMatch ? pluInlineMatch[3] : undefined;
-    let totalPrice = 0;
+    let priceOnLine = pluInlineMatch ? pluInlineMatch[4] : undefined;
+    let totalPrice = priceOnLine ? parseFloat(priceOnLine) : 0;
     let quantity = 1;
-    let unitPrice = 0;
+    let unitPrice = totalPrice;
 
     i = startIndex + 1;
 
@@ -931,8 +932,10 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       }
     }
 
-    // Look ahead for pricing starting from current i
-    while (i < Math.min(startIndex + 6, lines.length)) {
+    // Only look ahead if we don't have price yet
+    if (!totalPrice) {
+      // Look ahead for pricing starting from current i
+      while (i < Math.min(startIndex + 6, lines.length)) {
       const nextLine = lines[i];
 
       const weightMatch = nextLine.match(/(\d+\.\d+)\s*kg\s*@\s*\$(\d+\.\d{2})\/kg/);
@@ -976,6 +979,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       }
 
       i++;
+      }
     }
     
     if (productName && totalPrice > 0) {
@@ -1005,47 +1009,98 @@ function parseTotalsAndPaymentImproved(footerLines: string[], result: ReceiptDat
     const line = footerLines[i];
     
     // Subtotal - look for SUBTOTAL line followed by amount
+    // Skip amounts on HST line (like "H=HST 13% 9.98 @ 13.000%")
     if (line.includes('SUBTOTAL') && !result.subtotal_amount) {
-      // Check current line and next few lines for the amount
-      const subtotalMatch = line.match(/(\d+\.\d{2})/) ||
-                           (i + 1 < footerLines.length ? footerLines[i + 1].match(/(\d+\.\d{2})/) : null);
+      // First check if amount is on same line
+      const subtotalMatch = line.match(/SUBTOTAL\s+(\d+\.\d{2})/);
       if (subtotalMatch) {
         result.subtotal_amount = parseFloat(subtotalMatch[1]);
-        console.log('Found subtotal:', result.subtotal_amount);
+        console.log('Found subtotal on same line:', result.subtotal_amount);
+      } else {
+        // Look ahead, but skip HST line amounts
+        for (let j = i + 1; j < Math.min(i + 10, footerLines.length); j++) {
+          const nextLine = footerLines[j];
+          // Skip HST line (contains taxable base, not subtotal)
+          if (nextLine.includes('HST') || nextLine.includes('Trans.') || nextLine.includes('Account')) {
+            continue;
+          }
+          // Look for standalone amount
+          const amountMatch = nextLine.match(/^(\d+\.\d{2})$/);
+          if (amountMatch) {
+            const amount = parseFloat(amountMatch[1]);
+            // Subtotal should be reasonable (> $1 and < $1000)
+            if (amount > 1 && amount < 1000) {
+              result.subtotal_amount = amount;
+              console.log('Found subtotal on line', j, ':', result.subtotal_amount);
+              break;
+            }
+          }
+        }
       }
     }
     
-    // Tax from HST line - look for "H=HST 13% X.XX @ 13.000%" followed by tax amount
-    if (line.includes('HST') && line.includes('%')) {
-      // Tax amount is usually on the next line or after the percentage
-      for (let j = i; j < Math.min(i + 3, footerLines.length); j++) {
-        const taxLine = footerLines[j];
-        const taxMatch = taxLine.match(/(\d+\.\d{2})$/);
-        if (taxMatch) {
-          const taxAmount = parseFloat(taxMatch[1]);
-          // Tax should be reasonable (less than 20% of subtotal and under $20)
-          if (taxAmount < (result.subtotal_amount || 100) * 0.2 && taxAmount < 20 && taxAmount > 0) {
-            result.tax_amount = taxAmount;
-            console.log('Found tax amount:', result.tax_amount);
-            break;
+    // Tax from HST line - look for amount at end of line or on following lines
+    if (line.includes('HST') && line.includes('%') && !result.tax_amount) {
+      // Check if tax amount is at the end of the HST line (after the percentage)
+      const hstLineMatch = line.match(/HST.*?(\d+\.\d{2})\s*$/);
+      if (hstLineMatch) {
+        const taxAmount = parseFloat(hstLineMatch[1]);
+        // Validate it's a reasonable tax amount
+        if (result.subtotal_amount && taxAmount > 0 && taxAmount < result.subtotal_amount * 0.25) {
+          result.tax_amount = taxAmount;
+          console.log('Found tax amount on HST line:', result.tax_amount);
+        }
+      }
+      
+      // If not found on same line, look ahead for standalone amounts
+      if (!result.tax_amount) {
+        for (let j = i + 1; j < Math.min(i + 10, footerLines.length); j++) {
+          const nextLine = footerLines[j];
+          // Skip transaction info lines
+          if (nextLine.includes('Trans.') || nextLine.includes('Account') || nextLine.includes('TOTAL')) {
+            continue;
+          }
+          // Look for standalone tax amount
+          const taxMatch = nextLine.match(/^(\d+\.\d{2})$/);
+          if (taxMatch) {
+            const taxAmount = parseFloat(taxMatch[1]);
+            // Tax should be reasonable (5-25% of subtotal)
+            if (result.subtotal_amount && taxAmount > 0 && taxAmount < result.subtotal_amount * 0.25) {
+              result.tax_amount = taxAmount;
+              console.log('Found tax amount on line', j, ':', result.tax_amount);
+              break;
+            }
           }
         }
       }
     }
     
     // Total - look for TOTAL keyword followed by amount
-    if (line.includes('TOTAL') && !line.includes('SUBTOTAL')) {
-      // Look for total amount in current line or next few lines
-      for (let j = i; j < Math.min(i + 3, footerLines.length); j++) {
-        const totalLine = footerLines[j];
-        const totalMatch = totalLine.match(/(\d+\.\d{2})/);
-        if (totalMatch) {
-          const totalAmount = parseFloat(totalMatch[1]);
-          // Total should be greater than subtotal
-          if (totalAmount >= (result.subtotal_amount || 0) && totalAmount < (result.subtotal_amount || 0) + 50) {
-            result.total_amount = totalAmount;
-            console.log('Found total:', result.total_amount);
-            break;
+    if (line.includes('TOTAL') && !line.includes('SUBTOTAL') && !result.total_amount) {
+      // First check if amount is on same line
+      const totalMatch = line.match(/TOTAL\s+(\d+\.\d{2})/);
+      if (totalMatch) {
+        result.total_amount = parseFloat(totalMatch[1]);
+        console.log('Found total on same line:', result.total_amount);
+      } else {
+        // Look ahead for standalone amounts
+        for (let j = i + 1; j < Math.min(i + 10, footerLines.length); j++) {
+          const nextLine = footerLines[j];
+          // Skip transaction info lines
+          if (nextLine.includes('Trans.') || nextLine.includes('Account') || nextLine.includes('Card')) {
+            continue;
+          }
+          // Look for standalone total amount
+          const amountMatch = nextLine.match(/^(\d+\.\d{2})$/);
+          if (amountMatch) {
+            const totalAmount = parseFloat(amountMatch[1]);
+            // Total should be subtotal + tax (with small tolerance)
+            const expectedTotal = (result.subtotal_amount || 0) + (result.tax_amount || 0);
+            if (Math.abs(totalAmount - expectedTotal) < 1) {
+              result.total_amount = totalAmount;
+              console.log('Found total on line', j, ':', result.total_amount);
+              break;
+            }
           }
         }
       }
