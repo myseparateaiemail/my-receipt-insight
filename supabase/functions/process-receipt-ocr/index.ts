@@ -773,7 +773,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   //          "06464202330 JAM ZINC GLUCON HRQ 9.79" (HRQ tax code)
   //          "07965603045 BB US LTN $30 HMRJ" (item name with $)
   //          "*(2)619150990362 TD EV OLIVE OIL MRJ" (asterisk + multi-buy prefix)
-  const fullSkuMatch = line.match(/^(?:\*?\(\d+\))?(\*?\d{8,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
+  const fullSkuMatch = line.match(/^(?:\*?\(\d+\))?(\*?\d{7,15})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+([A-Z]))?\s*(\d+\.\d{2})?$/);
   
   if (fullSkuMatch) {
     const [, rawSku, productNamePart, taxCodeMatch, , priceOnLine] = fullSkuMatch;
@@ -792,10 +792,10 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     let quantity = 1;
     let unitPrice = totalPrice;
     
-    // If no price on main line, look ahead for pricing info
+  // If no price on main line, look ahead for pricing info
   if (!totalPrice) {
     i++;
-    let lookAheadLimit = Math.min(i + 6, lines.length);
+    let lookAheadLimit = Math.min(i + 10, lines.length);
     
     while (i < lookAheadLimit) {
       const nextLine = lines[i];
@@ -892,12 +892,11 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       if (bulkPriceMatch) {
         unitPrice = parseFloat(bulkPriceMatch[1]);
         i++;
-        // Look for quantity and final price in next lines
         continue;
       }
       
       // If we hit another item or reached a stopping point, break
-      if (nextLine.match(/^\d{8,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+      if (nextLine.match(/^\d{7,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
         break;
       }
       
@@ -925,9 +924,10 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   }
   
   // --- PATTERN 2: PLU items (4-5 digit codes) - typically produce ---
-  // Handle "4040 LIME", "to 4664 TOV GH RED", "94634 ORGNC LETTUCE MRJ 3.99"
-  const pluInlineMatch = line.match(/^(?:to\s+)?(\d{4,5})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+(\d+\.\d{2}))?$/);
-  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(?:to\s+)?(\d{4,5})$/) : null;
+  // Handle "4040 LIME", "to 4664 TOV GH RED", "94634 ORGNC LETTUCE MRJ 3.99",
+  // and multi-buy prefixes like "(2)4048 LIME"
+  const pluInlineMatch = line.match(/^(?:\(\d+\)\s*)?(?:to\s+)?(\d{4,5})\s+(.+?)(?:\s+([HM]?R[QJ]?))?(?:\s+(\d+\.\d{2}))?$/);
+  const pluOnlyMatch = !pluInlineMatch ? line.match(/^(?:\(\d+\)\s*)?(?:to\s+)?(\d{4,5})$/) : null;
 
   if (pluInlineMatch || pluOnlyMatch) {
     const plu = (pluInlineMatch ? pluInlineMatch[1] : pluOnlyMatch![1]);
@@ -1109,36 +1109,37 @@ function parseTotalsAndPaymentImproved(footerLines: string[], result: ReceiptDat
       }
     }
     
-    // Total - look for TOTAL keyword followed by amount
-    if (line.includes('TOTAL') && !line.includes('SUBTOTAL') && !result.total_amount) {
-      // First check if amount is on same line
-      const totalMatch = line.match(/TOTAL\s+(\d+\.\d{2})/);
-      if (totalMatch) {
-        result.total_amount = parseFloat(totalMatch[1]);
-        console.log('Found total on same line:', result.total_amount);
-      } else {
-        // Look ahead for standalone amounts
-        for (let j = i + 1; j < Math.min(i + 10, footerLines.length); j++) {
-          const nextLine = footerLines[j];
-          // Skip transaction info lines
-          if (nextLine.includes('Trans.') || nextLine.includes('Account') || nextLine.includes('Card')) {
-            continue;
-          }
-          // Look for standalone total amount
-          const amountMatch = nextLine.match(/^(\d+\.\d{2})$/);
-          if (amountMatch) {
-            const totalAmount = parseFloat(amountMatch[1]);
-            // Total should be subtotal + tax (with small tolerance)
-            const expectedTotal = (result.subtotal_amount || 0) + (result.tax_amount || 0);
-            if (Math.abs(totalAmount - expectedTotal) < 1) {
-              result.total_amount = totalAmount;
-              console.log('Found total on line', j, ':', result.total_amount);
-              break;
-            }
+  // Total - look for TOTAL keyword followed by amount anywhere on the line,
+  // or on one of the following standalone-amount lines
+  if (line.includes('TOTAL') && !line.includes('SUBTOTAL') && !result.total_amount) {
+    // First check if amount appears anywhere after TOTAL on the same line
+    const totalMatch = line.match(/TOTAL.*?(\d+\.\d{2})/);
+    if (totalMatch) {
+      result.total_amount = parseFloat(totalMatch[1]);
+      console.log('Found total on same line:', result.total_amount);
+    } else {
+      // Look ahead for standalone amounts
+      for (let j = i + 1; j < Math.min(i + 10, footerLines.length); j++) {
+        const nextLine = footerLines[j];
+        // Skip transaction info lines
+        if (nextLine.includes('Trans.') || nextLine.includes('Account') || nextLine.includes('Card')) {
+          continue;
+        }
+        // Look for standalone total amount
+        const amountMatch = nextLine.match(/^(\d+\.\d{2})/);
+        if (amountMatch) {
+          const totalAmount = parseFloat(amountMatch[1]);
+          const expectedTotal = (result.subtotal_amount || 0) + (result.tax_amount || 0);
+          // Accept if reasonably close (within $2) or if we don't have reliable subtotal/tax
+          if (!expectedTotal || Math.abs(totalAmount - expectedTotal) < 2) {
+            result.total_amount = totalAmount;
+            console.log('Found total on line', j, ':', result.total_amount);
+            break;
           }
         }
       }
     }
+  }
     
     // Payment method
     if (line.includes('Card Type:')) {
