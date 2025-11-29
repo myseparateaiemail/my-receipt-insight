@@ -731,13 +731,17 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           continue;
         }
 
-        // Standalone price
+        // Standalone price with sanity check (avoid picking up obviously corrupted amounts)
         const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
         if (standalonePriceMatch) {
-          totalPrice = parseFloat(standalonePriceMatch[1]);
-          unitPrice = totalPrice;
-          lookAhead++;
-          break;
+          const price = parseFloat(standalonePriceMatch[1]);
+          // Ignore implausibly large single-line prices (likely OCR noise)
+          if (price > 0 && price < 200) {
+            totalPrice = price;
+            unitPrice = totalPrice;
+            lookAhead++;
+            break;
+          }
         }
 
         // If we hit another obvious item / section, stop
@@ -878,13 +882,17 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         }
       }
       
-      // Simple standalone price (handle trailing numbers like "8.00 2")
+      // Simple standalone price (handle trailing numbers like "8.00 2") with sanity check
       const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
       if (standalonePriceMatch) {
-        totalPrice = parseFloat(standalonePriceMatch[1]);
-        unitPrice = totalPrice;
-        i++; // i now points to line after price
-        break;
+        const price = parseFloat(standalonePriceMatch[1]);
+        // Ignore implausibly large single-line prices (likely OCR noise)
+        if (price > 0 && price < 200) {
+          totalPrice = price;
+          unitPrice = totalPrice;
+          i++; // i now points to line after price
+          break;
+        }
       }
       
       // Bulk pricing pattern: "$0.89 ea or 5/$4.00 KB"
@@ -986,6 +994,13 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
               break;
             }
           }
+
+          // Fallback: compute total from quantity and unit price if no explicit total line
+          if (!totalPrice) {
+            totalPrice = parseFloat((quantity * unitPrice).toFixed(2));
+            i++;
+            break;
+          }
         }
 
         const qtyPriceMatch = nextLine.match(/(\d+)\s*@\s*\$(\d+\.\d{2})/);
@@ -1002,14 +1017,25 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
               break;
             }
           }
+
+          // Fallback: compute total from quantity and unit price if no explicit total line
+          if (!totalPrice) {
+            totalPrice = parseFloat((quantity * unitPrice).toFixed(2));
+            i++;
+            break;
+          }
         }
 
         const directPriceMatch = nextLine.match(/^(\d+\.\d{2})$/);
         if (directPriceMatch) {
-          totalPrice = parseFloat(directPriceMatch[1]);
-          unitPrice = totalPrice;
-          i++;
-          break;
+          const price = parseFloat(directPriceMatch[1]);
+          // Ignore implausibly large single-line prices (likely OCR noise)
+          if (price > 0 && price < 200) {
+            totalPrice = price;
+            unitPrice = totalPrice;
+            i++;
+            break;
+          }
         }
 
         i++;
