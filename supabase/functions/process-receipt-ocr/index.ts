@@ -29,6 +29,7 @@ interface ReceiptData {
     category?: string;
     line_number?: number;
     tax_code?: string;
+    description?: string; // e.g. size/weight like 400 ml, 454 g
   }>;
 }
 
@@ -243,6 +244,7 @@ serve(async (req) => {
           total_price: item.total_price,
           category: item.category,
           line_number: item.line_number,
+          description: item.description,
         }));
 
         const { error: itemsError } = await supabaseClient
@@ -581,8 +583,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       }
 
       if (totalPrice > 0) {
+        const details = getEnrichedProductDetails(nameLine, sku);
         const item = {
-          item_name: cleanProductName(nameLine),
+          item_name: details.name,
           product_code: sku,
           quantity,
           unit_price: unitPrice,
@@ -590,6 +593,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           line_number: lineNumber,
           category: mapSectionToCategory(section),
           tax_code: taxCode,
+          description: details.description,
         };
 
         const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
@@ -661,8 +665,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
     
     if (totalPrice > 0) {
+      const details = getEnrichedProductDetails(productName, sku);
       const item = {
-        item_name: cleanProductName(productName),
+        item_name: details.name,
         product_code: sku,
         quantity,
         unit_price: unitPrice,
@@ -670,8 +675,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         line_number: lineNumber,
         category: mapSectionToCategory(section),
         tax_code: taxCode,
+        description: details.description,
       };
-      
+
       const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
       return { item, nextIndex: safeNextIndex };
     }
@@ -753,8 +759,9 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
       }
 
       if (totalPrice > 0) {
+        const details = getEnrichedProductDetails(nameLine, sku);
         const item = {
-          item_name: cleanProductName(nameLine),
+          item_name: details.name,
           product_code: sku,
           quantity,
           unit_price: unitPrice,
@@ -762,6 +769,7 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
           line_number: lineNumber,
           category: mapSectionToCategory(section),
           tax_code: taxCode,
+          description: details.description,
         };
 
         const safeNextIndex = lookAhead > startIndex ? lookAhead : startIndex + 1;
@@ -934,17 +942,19 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
   }
     
     if (totalPrice > 0) {
+      const details = getEnrichedProductDetails(itemName, sku);
       const item = {
-        item_name: cleanProductName(itemName),
+        item_name: details.name,
         product_code: sku,
         quantity: quantity,
         unit_price: unitPrice,
         total_price: totalPrice,
         line_number: lineNumber,
         category: mapSectionToCategory(section),
-        tax_code: taxCode
+        tax_code: taxCode,
+        description: details.description,
       };
-      
+
       // Return i directly - it already points to next line after consumption
       // Only add +1 if we never moved from startIndex (price was on same line)
       const safeNextIndex = i > startIndex ? i : startIndex + 1;
@@ -1064,17 +1074,19 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
     }
     
     if (productName && totalPrice > 0) {
+      const details = getEnrichedProductDetails(productName, plu);
       const item = {
-        item_name: cleanProductName(productName),
+        item_name: details.name,
         product_code: plu,
         quantity: quantity,
         unit_price: unitPrice,
         total_price: totalPrice,
         line_number: lineNumber,
         category: mapSectionToCategory(section),
-        tax_code: taxCode
+        tax_code: taxCode,
+        description: details.description,
       };
-      
+
       const safeNextIndex = i > startIndex ? i : startIndex + 1;
       return { item, nextIndex: safeNextIndex };
     }
@@ -1175,30 +1187,29 @@ function parseTotalsAndPaymentImproved(footerLines: string[], result: ReceiptDat
         // Look for standalone total amount
         const amountMatch = nextLine.match(/^(\d+\.\d{2})/);
         if (amountMatch) {
-          const totalAmount = parseFloat(amountMatch[1]);
-          const expectedTotal = (result.subtotal_amount || 0) + (result.tax_amount || 0);
-          // Accept if reasonably close (within $2) or if we don't have reliable subtotal/tax
-          if (!expectedTotal || Math.abs(totalAmount - expectedTotal) < 2) {
-            result.total_amount = totalAmount;
-            console.log('Found total on line', j, ':', result.total_amount);
+          const candidate = parseFloat(amountMatch[1]);
+          const expected = (result.subtotal_amount || 0) + (result.tax_amount || 0);
+          // Prefer the value that matches subtotal + tax when we have both
+          if (result.subtotal_amount && result.tax_amount && Math.abs(candidate - expected) < 0.02) {
+            result.total_amount = candidate;
+            console.log('Found reconciled total on line', j, ':', result.total_amount);
             break;
+          }
+          // Otherwise fall back to first reasonable candidate
+          if (!result.total_amount) {
+            result.total_amount = candidate;
+            console.log('Found total on line', j, ':', result.total_amount);
           }
         }
       }
-    }
   }
-    
-    // Payment method
-    if (line.includes('Card Type:')) {
-      result.payment_method = line.trim();
-      console.log('Found payment method:', result.payment_method);
-    }
-    
-    // Date
-    const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{2,4}\s+\d{2}:\d{2}:\d{2})/);
-    if (dateMatch) {
-      result.receipt_date = dateMatch[1];
-      console.log('Found date:', result.receipt_date);
+
+  // Final reconciliation: if subtotal and tax are present, make total match their sum
+  if (result.subtotal_amount && result.tax_amount) {
+    const expected = parseFloat((result.subtotal_amount + result.tax_amount).toFixed(2));
+    if (!result.total_amount || Math.abs(result.total_amount - expected) > 0.02) {
+      console.log('Reconciling total from subtotal + tax. Old total:', result.total_amount, 'New total:', expected);
+      result.total_amount = expected;
     }
   }
 }
@@ -1212,6 +1223,43 @@ function cleanProductName(name: string): string {
     .split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+}
+
+// Map of known UPC codes to full marketing names and package sizes
+const PRODUCT_ENRICHMENT: Record<string, { fullName: string; size?: string }> = {
+  // Examples specifically requested by the user
+  "06038304633": {
+    fullName: "President's Choice Salsa Cheese Dip",
+    size: "400 ml",
+  },
+  "06038302106": {
+    fullName: "President's Choice Certified Angus Beef Extra Lean Ground Sirloin",
+    size: "454 g",
+  },
+};
+
+function getEnrichedProductDetails(rawName: string, productCode?: string) {
+  const cleaned = cleanProductName(rawName);
+  if (productCode && PRODUCT_ENRICHMENT[productCode]) {
+    const meta = PRODUCT_ENRICHMENT[productCode];
+    return {
+      name: meta.fullName,
+      description: meta.size,
+    };
+  }
+  return { name: cleaned, description: undefined as string | undefined };
+}
+
+function getEnrichedProductDetails(rawName: string, productCode?: string) {
+  const cleaned = cleanProductName(rawName);
+  if (productCode && PRODUCT_ENRICHMENT[productCode]) {
+    const meta = PRODUCT_ENRICHMENT[productCode];
+    return {
+      name: meta.fullName,
+      description: meta.size,
+    };
+  }
+  return { name: cleaned, description: undefined as string | undefined };
 }
 
 function mapSectionToCategory(section: string): string {

@@ -17,6 +17,7 @@ interface ParsedReceiptData {
     unit_price: number;
     line_number?: number;
     category?: string;
+    description?: string; // e.g. package size like 400 ml, 454 g
   }>;
   store_name?: string;
   store_phone?: string;
