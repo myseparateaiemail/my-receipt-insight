@@ -882,6 +882,27 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         }
       }
       
+      // Check if next line is another SKU item - if so, look ahead for price after it
+      if (nextLine.match(/^\d{7,15}/)) {
+        // Peek ahead to see if there's a standalone price after this next item
+        if (i + 1 < lines.length) {
+          const afterNextItem = lines[i + 1];
+          const standalonePriceMatch = afterNextItem.match(/^(\d+\.\d{2})\s*\d*$/);
+          if (standalonePriceMatch) {
+            const price = parseFloat(standalonePriceMatch[1]);
+            if (price > 0 && price < 200) {
+              // Found a price after the next item - use it for this item
+              totalPrice = price;
+              unitPrice = totalPrice;
+              // Don't increment i - let the loop return nextIndex = i (the next SKU line position)
+              break;
+            }
+          }
+        }
+        // No price found after next item, break
+        break;
+      }
+      
       // Simple standalone price (handle trailing numbers like "8.00 2") with sanity check
       const standalonePriceMatch = nextLine.match(/^(\d+\.\d{2})\s*\d*$/);
       if (standalonePriceMatch) {
@@ -903,8 +924,8 @@ function parseCompleteItemAtIndex(lines: string[], startIndex: number, section: 
         continue;
       }
       
-      // If we hit another item or reached a stopping point, break
-      if (nextLine.match(/^\d{7,15}/) || nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
+      // If we hit a section marker or stopping point, break
+      if (nextLine.match(/^\d{2}-/) || shouldSkipOCRLine(nextLine)) {
         break;
       }
       
