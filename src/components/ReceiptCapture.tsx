@@ -119,11 +119,49 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       console.log('OCR processing completed successfully');
       console.log('OCR result:', ocrResult);
       
+      // Enrich product names using the enrich-product edge function
+      let enrichedParsedData = ocrResult.parsedData;
+      if (ocrResult.parsedData?.items?.length > 0) {
+        const skus = ocrResult.parsedData.items
+          .map((item: any) => item.product_code)
+          .filter((sku: string) => sku && sku.length >= 4);
+        
+        if (skus.length > 0) {
+          console.log('Enriching products for SKUs:', skus);
+          try {
+            const { data: enrichmentData } = await supabase.functions.invoke('enrich-product', {
+              body: { skus }
+            });
+            
+            if (enrichmentData?.results) {
+              console.log('Enrichment results:', enrichmentData.results);
+              enrichedParsedData = {
+                ...ocrResult.parsedData,
+                items: ocrResult.parsedData.items.map((item: any) => {
+                  const enriched = enrichmentData.results[item.product_code];
+                  if (enriched) {
+                    return {
+                      ...item,
+                      item_name: enriched.fullName || item.item_name,
+                      description: enriched.description || item.description,
+                      category: enriched.category || item.category
+                    };
+                  }
+                  return item;
+                })
+              };
+            }
+          } catch (enrichError) {
+            console.log('Enrichment failed, using original names:', enrichError);
+          }
+        }
+      }
+      
       // Set up review data instead of saving immediately
       setReviewData({
         imageUrl: publicUrl,
-        rawText: ocrResult.extractedText || '',
-        parsedData: ocrResult.parsedData,
+        rawText: ocrResult.ocrText || '',
+        parsedData: enrichedParsedData,
         receiptId: '' // Will be set when user approves
       });
       
