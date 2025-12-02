@@ -42,3 +42,6 @@ enabled = false
 
 [functions.process-receipt-ocr]
 verify_jwt = false
+
+[functions.enrich-product]
+verify_jwt = false
