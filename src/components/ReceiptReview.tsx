@@ -17,7 +17,8 @@ interface ParsedReceiptData {
     unit_price: number;
     line_number?: number;
     category?: string;
-    size?: string; // e.g., "400 ml", "12x355 ml", "454 g"
+    size?: string;
+    brand?: string;
     description?: string;
   }>;
   store_name?: string;
@@ -74,7 +75,8 @@ export const ReceiptReview = ({
         total_price: 0,
         unit_price: 0,
         line_number: prev.items.length + 1,
-        size: ""
+        size: "",
+        brand: ""
       }]
     }));
   };
@@ -270,8 +272,8 @@ export const ReceiptReview = ({
                         </Button>
                       </div>
 
-                      {/* Row 2: SKU, Size, Category */}
-                      <div className="grid grid-cols-3 gap-2">
+                      {/* Row 2: SKU, Brand, Size, Category */}
+                      <div className="grid grid-cols-4 gap-2">
                         <div>
                           <Label className="text-xs text-muted-foreground">SKU</Label>
                           <Input
@@ -282,7 +284,16 @@ export const ReceiptReview = ({
                           />
                         </div>
                         <div>
-                          <Label className="text-xs text-muted-foreground">Size/Amount</Label>
+                          <Label className="text-xs text-muted-foreground">Brand</Label>
+                          <Input
+                            value={item.brand || ""}
+                            onChange={(e) => updateItem(index, "brand", e.target.value)}
+                            placeholder="e.g., PC"
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Size</Label>
                           <Input
                             value={item.size || ""}
                             onChange={(e) => updateItem(index, "size", e.target.value)}

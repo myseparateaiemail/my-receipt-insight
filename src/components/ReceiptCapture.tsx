@@ -155,6 +155,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                       ...item,
                       item_name: enriched.fullName,
                       size: enriched.size || item.size || '',
+                      brand: enriched.brand || item.brand || '',
                       category: enriched.category || item.category
                     };
                   }
@@ -260,6 +261,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               product_code: item.product_code,
               line_number: item.line_number,
               category: item.category,
+              brand: item.brand || null,
               description: item.size || item.description // Store size in description field
             }))
           );
