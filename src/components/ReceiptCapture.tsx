@@ -139,10 +139,16 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                 ...ocrResult.parsedData,
                 items: ocrResult.parsedData.items.map((item: any) => {
                   const enriched = enrichmentData.results[item.product_code];
-                  if (enriched) {
+                  // Only use enriched data if it's valid (not store name or generic placeholder)
+                  const isValidEnrichment = enriched?.fullName && 
+                    !enriched.fullName.toLowerCase().includes('superstore') &&
+                    !enriched.fullName.toLowerCase().includes('walmart') &&
+                    enriched.fullName.length > 3;
+                  
+                  if (isValidEnrichment) {
                     return {
                       ...item,
-                      item_name: enriched.fullName || item.item_name,
+                      item_name: enriched.fullName,
                       description: enriched.description || item.description,
                       category: enriched.category || item.category
                     };
