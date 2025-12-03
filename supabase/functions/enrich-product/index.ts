@@ -8,235 +8,266 @@ const corsHeaders = {
 
 interface ProductInfo {
   fullName: string;
-  description: string; // size/weight like "400 ml", "454 g"
+  size: string; // e.g., "400 ml", "12x355 ml", "454 g"
   brand?: string;
   category?: string;
 }
 
-// Try to fetch product info from Real Canadian Superstore
-async function fetchFromSuperstore(sku: string): Promise<ProductInfo | null> {
+// Use Lovable AI to look up product information based on SKU and abbreviated name
+async function enrichWithAI(sku: string, abbreviatedName: string): Promise<ProductInfo | null> {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  
+  if (!LOVABLE_API_KEY) {
+    console.log("[AI] LOVABLE_API_KEY not configured");
+    return null;
+  }
+
   try {
-    console.log(`[Superstore] Searching for SKU: ${sku}`);
+    console.log(`[AI] Looking up SKU: ${sku}, Name: ${abbreviatedName}`);
     
-    // Real Canadian Superstore product API endpoint
-    const searchUrl = `https://www.realcanadiansuperstore.ca/api/product/search?q=${sku}`;
-    
-    const response = await fetch(searchUrl, {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Accept-Language': 'en-CA,en;q=0.9',
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content: `You are a Canadian grocery product database expert. Given a product SKU/UPC code and abbreviated name from a Real Canadian Superstore receipt, identify the full product name, brand, size/quantity, and category.
+
+Common abbreviations:
+- PC = President's Choice
+- NCCO = No Name
+- SIGGI YOG = Siggi's Yogurt
+- SPRT = Sparkling
+- GFRT = Grapefruit
+- MSHRMS = Mushrooms
+- WHT = White
+- BAN = Banana
+- RAS = Raspberry
+- CLN = Clean/Cleaner
+- NEUT = Neutrogena
+- RSBL = Reusable
+- SHRT = Short
+- BG = Bag
+- SUP = Supplies
+
+Categories: Bakery, Beverages, Dairy, Deli, Frozen, Household, Meats, Pantry, Produce, Personal Care, Entertainment, Health, Seafood, Snacks
+
+Return ONLY valid JSON with these exact fields:
+{
+  "fullName": "Complete product name without size",
+  "size": "Size with units (e.g., '400 ml', '12x355 ml', '454 g', '283 g')",
+  "brand": "Brand name",
+  "category": "Category from the list above"
+}
+
+If you cannot identify the product with confidence, return null for that field.`
+          },
+          {
+            role: "user",
+            content: `SKU: ${sku}\nAbbreviated name from receipt: ${abbreviatedName}\n\nIdentify the full product details.`
+          }
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "return_product_info",
+              description: "Return the identified product information",
+              parameters: {
+                type: "object",
+                properties: {
+                  fullName: { 
+                    type: "string", 
+                    description: "Complete product name without size information" 
+                  },
+                  size: { 
+                    type: "string", 
+                    description: "Product size with units (e.g., '400 ml', '12x355 ml', '454 g')" 
+                  },
+                  brand: { 
+                    type: "string", 
+                    description: "Brand name" 
+                  },
+                  category: { 
+                    type: "string", 
+                    description: "Product category" 
+                  }
+                },
+                required: ["fullName", "size"]
+              }
+            }
+          }
+        ],
+        tool_choice: { type: "function", function: { name: "return_product_info" } }
+      }),
     });
 
     if (!response.ok) {
-      console.log(`[Superstore] Search failed with status: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`[AI] Gateway error: ${response.status} - ${errorText}`);
       return null;
     }
 
     const data = await response.json();
-    console.log(`[Superstore] Response received, parsing...`);
-
-    // Parse the response structure (varies by API version)
-    if (data?.results?.length > 0) {
-      const product = data.results[0];
+    
+    // Extract tool call result
+    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+    if (toolCall?.function?.arguments) {
+      const result = JSON.parse(toolCall.function.arguments);
+      console.log(`[AI] Found: ${result.fullName} (${result.size})`);
       return {
-        fullName: product.name || product.title || '',
-        description: product.packageSize || product.size || '',
-        brand: product.brand || '',
-        category: product.category || '',
-      };
-    }
-
-    // Try alternate response structure
-    if (data?.products?.length > 0) {
-      const product = data.products[0];
-      return {
-        fullName: product.name || product.productName || '',
-        description: product.packageSize || product.size || product.weight || '',
-        brand: product.brand || product.brandName || '',
-        category: product.category || '',
+        fullName: result.fullName || abbreviatedName,
+        size: result.size || "",
+        brand: result.brand || "",
+        category: result.category || ""
       };
     }
 
     return null;
   } catch (error) {
-    console.error(`[Superstore] Error fetching product: ${error.message}`);
+    console.error(`[AI] Error: ${error.message}`);
     return null;
   }
 }
 
-// Try to fetch product info from Walmart Canada
-async function fetchFromWalmart(sku: string): Promise<ProductInfo | null> {
-  try {
-    console.log(`[Walmart] Searching for SKU: ${sku}`);
-    
-    // Walmart Canada search API
-    const searchUrl = `https://www.walmart.ca/api/product-page/find-products?q=${sku}&lang=en`;
-    
-    const response = await fetch(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Accept-Language': 'en-CA,en;q=0.9',
-      },
-    });
-
-    if (!response.ok) {
-      console.log(`[Walmart] Search failed with status: ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json();
-    console.log(`[Walmart] Response received, parsing...`);
-
-    // Parse Walmart response structure
-    if (data?.items?.length > 0) {
-      const product = data.items[0];
-      return {
-        fullName: product.name || product.title || '',
-        description: extractSizeFromName(product.name || '') || product.size || '',
-        brand: product.brand || '',
-        category: product.category || '',
-      };
-    }
-
-    // Try alternate response structure
-    if (data?.products?.length > 0) {
-      const product = data.products[0];
-      return {
-        fullName: product.name || product.productName || '',
-        description: extractSizeFromName(product.name || '') || product.packageSize || '',
-        brand: product.brand || '',
-        category: product.category || '',
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.error(`[Walmart] Error fetching product: ${error.message}`);
-    return null;
-  }
-}
-
-// Extract size/weight from product name (e.g., "Product Name 400ml" -> "400 ml")
+// Fallback: Extract size from abbreviated name
 function extractSizeFromName(name: string): string {
-  // Match patterns like "400ml", "454g", "1.5L", "2kg", etc.
   const sizePatterns = [
+    /(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)\s*(ml|l|g|kg|oz|lb)/gi,
     /(\d+(?:\.\d+)?)\s*(ml|l|g|kg|oz|lb|lbs|litre|liter|gram|kilogram)/gi,
-    /(\d+(?:\.\d+)?)\s*(pack|pk|ct|count)/gi,
+    /(\d+)\s*(pack|pk|ct|count)/gi,
   ];
 
   for (const pattern of sizePatterns) {
     const match = name.match(pattern);
     if (match) {
-      // Normalize the size string
-      let size = match[match.length - 1];
-      // Add space between number and unit if missing
+      let size = match[0];
       size = size.replace(/(\d)([a-zA-Z])/g, '$1 $2');
       return size;
     }
   }
-
   return '';
 }
 
-// Fallback: Try to scrape product page directly
-async function fetchProductPageDirect(sku: string): Promise<ProductInfo | null> {
-  try {
-    console.log(`[Direct] Attempting direct page fetch for SKU: ${sku}`);
-    
-    // Format SKU for URL (remove leading zeros for some lookups)
-    const formattedSku = sku.replace(/^0+/, '');
-    
-    // Try Superstore product page
-    const superstoreUrl = `https://www.realcanadiansuperstore.ca/search?search-bar=${sku}`;
-    
-    const response = await fetch(superstoreUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-CA,en;q=0.9',
-      },
-    });
+// Expand common abbreviations as fallback
+function expandAbbreviations(name: string): string {
+  const abbreviations: Record<string, string> = {
+    'PC ': 'President\'s Choice ',
+    'NCCO ': 'No Name ',
+    'SIGGI YOG': 'Siggi\'s Yogurt',
+    'SPRT': 'Sparkling',
+    'GFRT': 'Grapefruit',
+    'MSHRMS': 'Mushrooms',
+    'WHT': 'White',
+    'BAN': 'Banana',
+    'RAS': 'Raspberry',
+    'CLN': 'Cleaner',
+    'NEUT': 'Neutrogena',
+    'ORG': 'Organic',
+    'VEG': 'Vegetable',
+    'FRZ': 'Frozen',
+    'CHK': 'Chicken',
+    'BF': 'Beef',
+    'PK': 'Pork',
+    'SWT': 'Sweet',
+    'GRN': 'Green',
+    'RED': 'Red',
+    'YLW': 'Yellow',
+    'BLU': 'Blue',
+    'CHOC': 'Chocolate',
+    'VAN': 'Vanilla',
+    'STRW': 'Strawberry',
+    'LRG': 'Large',
+    'MED': 'Medium',
+    'SML': 'Small',
+    'XL': 'Extra Large',
+  };
 
-    if (!response.ok) {
-      console.log(`[Direct] Page fetch failed with status: ${response.status}`);
-      return null;
-    }
-
-    const html = await response.text();
-    
-    // Extract product info from HTML using regex (basic scraping)
-    const titleMatch = html.match(/<h1[^>]*class="[^"]*product-name[^"]*"[^>]*>([^<]+)<\/h1>/i) ||
-                       html.match(/<title>([^|<]+)/i);
-    
-    const sizeMatch = html.match(/(\d+(?:\.\d+)?)\s*(ml|g|kg|l|oz|lb)/gi);
-    
-    if (titleMatch) {
-      const fullName = titleMatch[1].trim();
-      const description = sizeMatch ? sizeMatch[0] : extractSizeFromName(fullName);
-      
-      return {
-        fullName,
-        description,
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.error(`[Direct] Error: ${error.message}`);
-    return null;
+  let expanded = name;
+  for (const [abbr, full] of Object.entries(abbreviations)) {
+    expanded = expanded.replace(new RegExp(abbr, 'gi'), full);
   }
+  return expanded.trim();
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { sku, skus } = await req.json();
+    const { sku, skus, items } = await req.json();
     
-    // Handle single SKU or batch of SKUs
+    // Handle items array with both SKU and name for better enrichment
+    if (items && Array.isArray(items)) {
+      console.log(`Processing ${items.length} items with names`);
+      
+      const results: Record<string, ProductInfo | null> = {};
+      
+      for (const item of items) {
+        const currentSku = item.product_code || item.sku;
+        const itemName = item.item_name || item.name || '';
+        
+        if (!currentSku) continue;
+        
+        console.log(`\n--- Processing: ${currentSku} - ${itemName} ---`);
+        
+        // Try AI enrichment first
+        let productInfo = await enrichWithAI(currentSku, itemName);
+        
+        // Fallback: expand abbreviations
+        if (!productInfo) {
+          const expanded = expandAbbreviations(itemName);
+          const size = extractSizeFromName(itemName);
+          if (expanded !== itemName || size) {
+            productInfo = {
+              fullName: expanded,
+              size: size,
+            };
+          }
+        }
+
+        if (productInfo) {
+          console.log(`[${currentSku}] Enriched: ${productInfo.fullName} (${productInfo.size})`);
+        } else {
+          console.log(`[${currentSku}] Could not enrich`);
+        }
+
+        results[currentSku] = productInfo;
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          results,
+          message: `Processed ${items.length} item(s)` 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Legacy: handle single SKU or batch of SKUs (without names)
     const skuList: string[] = skus || (sku ? [sku] : []);
     
     if (skuList.length === 0) {
       return new Response(
-        JSON.stringify({ error: 'No SKU provided' }),
+        JSON.stringify({ error: 'No SKU or items provided' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`Processing ${skuList.length} SKU(s): ${skuList.join(', ')}`);
+    console.log(`Processing ${skuList.length} SKU(s) without names`);
 
     const results: Record<string, ProductInfo | null> = {};
 
     for (const currentSku of skuList) {
-      console.log(`\n--- Processing SKU: ${currentSku} ---`);
-      
-      // Try Superstore first
-      let productInfo = await fetchFromSuperstore(currentSku);
-      
-      // If not found, try Walmart
-      if (!productInfo) {
-        console.log(`[${currentSku}] Not found on Superstore, trying Walmart...`);
-        productInfo = await fetchFromWalmart(currentSku);
-      }
-      
-      // If still not found, try direct page scraping
-      if (!productInfo) {
-        console.log(`[${currentSku}] Not found via APIs, trying direct scrape...`);
-        productInfo = await fetchProductPageDirect(currentSku);
-      }
-
-      if (productInfo) {
-        console.log(`[${currentSku}] Found: ${productInfo.fullName} (${productInfo.description})`);
-      } else {
-        console.log(`[${currentSku}] Product not found on any source`);
-      }
-
+      // Without a name, AI enrichment is less effective
+      const productInfo = await enrichWithAI(currentSku, "");
       results[currentSku] = productInfo;
     }
 
