@@ -122,15 +122,19 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       // Enrich product names using the enrich-product edge function
       let enrichedParsedData = ocrResult.parsedData;
       if (ocrResult.parsedData?.items?.length > 0) {
-        const skus = ocrResult.parsedData.items
-          .map((item: any) => item.product_code)
-          .filter((sku: string) => sku && sku.length >= 4);
+        // Send items with both SKU and abbreviated name for better AI enrichment
+        const itemsForEnrichment = ocrResult.parsedData.items
+          .filter((item: any) => item.product_code && item.product_code.length >= 4)
+          .map((item: any) => ({
+            product_code: item.product_code,
+            item_name: item.item_name
+          }));
         
-        if (skus.length > 0) {
-          console.log('Enriching products for SKUs:', skus);
+        if (itemsForEnrichment.length > 0) {
+          console.log('Enriching products:', itemsForEnrichment);
           try {
             const { data: enrichmentData } = await supabase.functions.invoke('enrich-product', {
-              body: { skus }
+              body: { items: itemsForEnrichment }
             });
             
             if (enrichmentData?.results) {
@@ -143,13 +147,14 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                   const isValidEnrichment = enriched?.fullName && 
                     !enriched.fullName.toLowerCase().includes('superstore') &&
                     !enriched.fullName.toLowerCase().includes('walmart') &&
+                    !enriched.fullName.toLowerCase().includes('real canadian') &&
                     enriched.fullName.length > 3;
                   
                   if (isValidEnrichment) {
                     return {
                       ...item,
                       item_name: enriched.fullName,
-                      description: enriched.description || item.description,
+                      size: enriched.size || item.size || '',
                       category: enriched.category || item.category
                     };
                   }
@@ -253,7 +258,9 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               total_price: item.total_price,
               unit_price: item.unit_price,
               product_code: item.product_code,
-              line_number: item.line_number
+              line_number: item.line_number,
+              category: item.category,
+              description: item.size || item.description // Store size in description field
             }))
           );
 
