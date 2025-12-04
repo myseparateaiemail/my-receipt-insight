@@ -31,7 +31,6 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
   const handleCapture = () => {
     setIsCapturing(true);
-    // Simulate camera capture
     setTimeout(() => {
       setCapturedImage(sampleReceipt);
       setIsCapturing(false);
@@ -40,6 +39,18 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         description: "Processing with OCR technology...",
       });
     }, 2000);
+  };
+
+  // Check if a line is a discount/adjustment
+  const isDiscountLine = (itemName: string, price: number): boolean => {
+    const discountPatterns = [
+      /^ARCP/i,
+      /discount/i,
+      /savings/i,
+      /^-/,
+      /%\s*\(/,
+    ];
+    return price < 0 || discountPatterns.some(p => p.test(itemName));
   };
 
   const processReceiptFile = async (file: File) => {
@@ -57,7 +68,6 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     setUploadProgress(0);
 
     try {
-      // Upload image to Supabase storage
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
@@ -78,7 +88,6 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       setUploadProgress(30);
 
-      // Get the public URL for the uploaded image
       const { data: { publicUrl } } = supabase.storage
         .from('receipts')
         .getPublicUrl(filePath);
@@ -87,11 +96,10 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       setUploadProgress(60);
 
-      // Process OCR first, then create receipt record only if user approves
       console.log('Starting OCR processing...');
       const { data: ocrResult, error: ocrError } = await supabase.functions.invoke('process-receipt-ocr', {
         body: {
-          receiptId: 'temp-processing', // Temporary ID for processing
+          receiptId: 'temp-processing',
           imageUrl: publicUrl,
         },
       });
@@ -119,12 +127,19 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       console.log('OCR processing completed successfully');
       console.log('OCR result:', ocrResult);
       
-      // Enrich product names using the enrich-product edge function
+      // Process items and enrich with product data
       let enrichedParsedData = ocrResult.parsedData;
       if (ocrResult.parsedData?.items?.length > 0) {
-        // Send items with both SKU and abbreviated name for better AI enrichment
-        const itemsForEnrichment = ocrResult.parsedData.items
-          .filter((item: any) => item.product_code && item.product_code.length >= 4)
+        // Mark discount lines
+        const itemsWithFlags = ocrResult.parsedData.items.map((item: any) => ({
+          ...item,
+          is_discount: isDiscountLine(item.item_name, item.total_price),
+          confidence: 'fallback'
+        }));
+
+        // Get non-discount items for enrichment
+        const itemsForEnrichment = itemsWithFlags
+          .filter((item: any) => !item.is_discount && item.product_code && item.product_code.length >= 4)
           .map((item: any) => ({
             product_code: item.product_code,
             item_name: item.item_name
@@ -141,14 +156,17 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               console.log('Enrichment results:', enrichmentData.results);
               enrichedParsedData = {
                 ...ocrResult.parsedData,
-                items: ocrResult.parsedData.items.map((item: any) => {
+                items: itemsWithFlags.map((item: any) => {
+                  if (item.is_discount) return item;
+                  
                   const enriched = enrichmentData.results[item.product_code];
-                  // Only use enriched data if it's valid (not store name or generic placeholder)
+                  
+                  // Validate enrichment - reject if it looks like store name or is too generic
+                  const invalidPatterns = ['superstore', 'walmart', 'real canadian', 'loblaws', 'no frills'];
                   const isValidEnrichment = enriched?.fullName && 
-                    !enriched.fullName.toLowerCase().includes('superstore') &&
-                    !enriched.fullName.toLowerCase().includes('walmart') &&
-                    !enriched.fullName.toLowerCase().includes('real canadian') &&
-                    enriched.fullName.length > 3;
+                    !invalidPatterns.some(p => enriched.fullName.toLowerCase().includes(p)) &&
+                    enriched.fullName.length > 3 &&
+                    enriched.fullName !== item.item_name; // Should be different from original
                   
                   if (isValidEnrichment) {
                     return {
@@ -156,7 +174,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                       item_name: enriched.fullName,
                       size: enriched.size || item.size || '',
                       brand: enriched.brand || item.brand || '',
-                      category: enriched.category || item.category
+                      category: enriched.category || item.category,
+                      confidence: enriched.confidence || 'ai_suggested'
                     };
                   }
                   return item;
@@ -166,15 +185,16 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           } catch (enrichError) {
             console.log('Enrichment failed, using original names:', enrichError);
           }
+        } else {
+          enrichedParsedData = { ...ocrResult.parsedData, items: itemsWithFlags };
         }
       }
       
-      // Set up review data instead of saving immediately
       setReviewData({
         imageUrl: publicUrl,
         rawText: ocrResult.ocrText || '',
         parsedData: enrichedParsedData,
-        receiptId: '' // Will be set when user approves
+        receiptId: ''
       });
       
       setUploadProgress(100);
@@ -200,14 +220,12 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        // Show preview
         const reader = new FileReader();
         reader.onload = (e) => {
           setCapturedImage(e.target?.result as string);
         };
         reader.readAsDataURL(file);
 
-        // Process the file
         await processReceiptFile(file);
       }
     };
@@ -218,7 +236,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     if (!user || !reviewData) return;
 
     try {
-      // Create receipt record in database with approved data
+      // Create receipt record
       const { data: receipt, error: insertError } = await supabase
         .from('receipts')
         .insert({
@@ -262,7 +280,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               line_number: item.line_number,
               category: item.category,
               brand: item.brand || null,
-              description: item.size || item.description // Store size in description field
+              description: item.size || item.description
             }))
           );
 
@@ -271,9 +289,65 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         }
       }
 
+      // Save user corrections to verified_products table for learning
+      const itemsToVerify = finalData.items?.filter((item: any) => 
+        item.product_code && 
+        item.item_name &&
+        !item.is_discount &&
+        item.product_code.length >= 4
+      );
+
+      if (itemsToVerify?.length > 0) {
+        console.log('Saving verified products for future learning...');
+        
+        for (const item of itemsToVerify) {
+          const storeChain = finalData.store_name?.includes('Superstore') 
+            ? 'Real Canadian Superstore' 
+            : (finalData.store_name || 'Unknown');
+          
+          // Check if product already exists
+          const { data: existing } = await supabase
+            .from('verified_products')
+            .select('id, verification_count')
+            .eq('sku', item.product_code)
+            .eq('store_chain', storeChain)
+            .maybeSingle();
+
+          if (existing) {
+            // Update existing record and increment count
+            await supabase
+              .from('verified_products')
+              .update({ 
+                product_name: item.item_name,
+                brand: item.brand || null,
+                size: item.size || null,
+                category: item.category || null,
+                verification_count: (existing.verification_count || 0) + 1,
+                last_verified_at: new Date().toISOString()
+              })
+              .eq('id', existing.id);
+          } else {
+            // Insert new record
+            await supabase
+              .from('verified_products')
+              .insert({
+                sku: item.product_code,
+                product_name: item.item_name,
+                brand: item.brand || null,
+                size: item.size || null,
+                category: item.category || null,
+                store_chain: storeChain,
+                created_by: user.id,
+                verification_count: 1
+              });
+          }
+        }
+        console.log(`Saved ${itemsToVerify.length} products to verified database`);
+      }
+
       toast({
         title: "Success!",
-        description: "Receipt approved and saved successfully",
+        description: "Receipt saved. Product data saved for better future accuracy.",
       });
 
       setReviewMode(false);
