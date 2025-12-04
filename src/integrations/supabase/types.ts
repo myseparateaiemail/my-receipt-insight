@@ -241,6 +241,54 @@ export type Database = {
         }
         Relationships: []
       }
+      verified_products: {
+        Row: {
+          brand: string | null
+          category: string | null
+          confidence_score: number | null
+          created_at: string
+          created_by: string | null
+          id: string
+          last_verified_at: string | null
+          product_name: string
+          size: string | null
+          sku: string
+          store_chain: string | null
+          updated_at: string
+          verification_count: number | null
+        }
+        Insert: {
+          brand?: string | null
+          category?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          last_verified_at?: string | null
+          product_name: string
+          size?: string | null
+          sku: string
+          store_chain?: string | null
+          updated_at?: string
+          verification_count?: number | null
+        }
+        Update: {
+          brand?: string | null
+          category?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          last_verified_at?: string | null
+          product_name?: string
+          size?: string | null
+          sku?: string
+          store_chain?: string | null
+          updated_at?: string
+          verification_count?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
