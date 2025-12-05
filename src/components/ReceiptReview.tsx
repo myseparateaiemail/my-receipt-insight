@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, X, Plus, Trash2, Eye, EyeOff, AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
+import { Check, X, Plus, Trash2, Eye, EyeOff, CheckCircle2, HelpCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,25 +15,24 @@ interface ReceiptItem {
   quantity: number;
   total_price: number;
   unit_price: number;
+  discount_amount?: number;
   line_number?: number;
   category?: string;
   size?: string;
   brand?: string;
   description?: string;
-  confidence?: 'verified' | 'ai_suggested' | 'fallback' | 'discount';
-  is_discount?: boolean;
-  applies_to_sku?: string;
+  confidence?: 'verified' | 'ai_suggested' | 'fallback';
 }
 
 interface ParsedReceiptData {
   items: ReceiptItem[];
   store_name?: string;
-  store_phone?: string;
   tax_amount?: number;
   payment_method?: string;
   receipt_date?: string;
   subtotal_amount?: number;
   total_amount?: number;
+  card_last_four?: string;
 }
 
 interface ReceiptReviewProps {
@@ -95,16 +94,7 @@ export const ReceiptReview = ({
     }));
   };
 
-  const getConfidenceBadge = (confidence?: string, isDiscount?: boolean) => {
-    if (isDiscount) {
-      return (
-        <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-600 border-amber-300">
-          <AlertTriangle className="h-3 w-3 mr-1" />
-          Discount
-        </Badge>
-      );
-    }
-    
+  const getConfidenceBadge = (confidence?: string) => {
     switch (confidence) {
       case 'verified':
         return (
@@ -132,16 +122,17 @@ export const ReceiptReview = ({
   const categoryOptions = [
     "Bakery", "Baking Supplies", "Beverages", "Canned Goods", 
     "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", 
-    "Entertainment", "Frozen", "Garden", "Health", "Household", 
+    "Dips", "Entertainment", "Frozen", "Garden", "Health", "Household", 
     "International Foods", "Meats", "Natural Foods", "Pantry", 
     "Pasta & Grains", "Personal Care", "Produce", "Ready Made", 
     "Seafood", "Snacks", "Spices & Seasonings"
   ];
 
-  // Count items by confidence
-  const verifiedCount = editedData.items.filter(i => i.confidence === 'verified').length;
-  const aiCount = editedData.items.filter(i => i.confidence === 'ai_suggested').length;
-  const needsReviewCount = editedData.items.filter(i => !i.confidence || i.confidence === 'fallback').length;
+  // Count items by confidence (excluding discount-only pseudo items)
+  const regularItems = editedData.items;
+  const verifiedCount = regularItems.filter(i => i.confidence === 'verified').length;
+  const aiCount = regularItems.filter(i => i.confidence === 'ai_suggested').length;
+  const needsReviewCount = regularItems.filter(i => !i.confidence || i.confidence === 'fallback').length;
 
   return (
     <TooltipProvider>
@@ -238,12 +229,13 @@ export const ReceiptReview = ({
                         />
                       </div>
                       <div>
-                        <Label htmlFor="store_phone" className="text-xs">Phone</Label>
+                        <Label htmlFor="card_last_four" className="text-xs">Card Last 4</Label>
                         <Input
-                          id="store_phone"
-                          value={editedData.store_phone || ""}
-                          onChange={(e) => updateStoreInfo("store_phone", e.target.value)}
-                          placeholder="Phone number"
+                          id="card_last_four"
+                          value={editedData.card_last_four || ""}
+                          onChange={(e) => updateStoreInfo("card_last_four", e.target.value)}
+                          placeholder="0073"
+                          maxLength={4}
                           className="h-8"
                         />
                       </div>
@@ -322,11 +314,9 @@ export const ReceiptReview = ({
                       <div 
                         key={index} 
                         className={`p-3 rounded-lg border space-y-2 ${
-                          item.is_discount 
-                            ? 'bg-amber-50 border-amber-200' 
-                            : item.confidence === 'verified' 
-                              ? 'bg-green-50/50 border-green-200' 
-                              : 'bg-muted/10'
+                          item.confidence === 'verified' 
+                            ? 'bg-green-50/50 border-green-200' 
+                            : 'bg-muted/10'
                         }`}
                       >
                         {/* Row 1: Name, Confidence Badge, Delete button */}
@@ -334,7 +324,7 @@ export const ReceiptReview = ({
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1">
                               <Label className="text-xs text-muted-foreground">Product Name</Label>
-                              {getConfidenceBadge(item.confidence, item.is_discount)}
+                              {getConfidenceBadge(item.confidence)}
                             </div>
                             <Input
                               value={item.item_name}
@@ -397,8 +387,8 @@ export const ReceiptReview = ({
                           </div>
                         </div>
 
-                        {/* Row 3: Qty, Unit Price, Total */}
-                        <div className="grid grid-cols-3 gap-2">
+                        {/* Row 3: Qty, Unit Price, Discount, Total */}
+                        <div className="grid grid-cols-4 gap-2">
                           <div>
                             <Label className="text-xs text-muted-foreground">Qty</Label>
                             <Input
@@ -409,8 +399,9 @@ export const ReceiptReview = ({
                               onChange={(e) => {
                                 const qty = parseFloat(e.target.value) || 0;
                                 updateItem(index, "quantity", qty);
+                                const discount = item.discount_amount || 0;
                                 if (item.unit_price) {
-                                  updateItem(index, "total_price", qty * item.unit_price);
+                                  updateItem(index, "total_price", (qty * item.unit_price) - Math.abs(discount));
                                 }
                               }}
                               className="h-7 text-xs"
@@ -425,10 +416,28 @@ export const ReceiptReview = ({
                               onChange={(e) => {
                                 const unitPrice = parseFloat(e.target.value) || 0;
                                 updateItem(index, "unit_price", unitPrice);
-                                updateItem(index, "total_price", item.quantity * unitPrice);
+                                const discount = item.discount_amount || 0;
+                                updateItem(index, "total_price", (item.quantity * unitPrice) - Math.abs(discount));
                               }}
                               placeholder="0.00"
                               className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Discount</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={item.discount_amount || ""}
+                              onChange={(e) => {
+                                const discount = parseFloat(e.target.value) || 0;
+                                updateItem(index, "discount_amount", discount);
+                                if (item.unit_price) {
+                                  updateItem(index, "total_price", (item.quantity * item.unit_price) - Math.abs(discount));
+                                }
+                              }}
+                              placeholder=""
+                              className="h-7 text-xs text-green-600"
                             />
                           </div>
                           <div>
@@ -439,17 +448,10 @@ export const ReceiptReview = ({
                               value={item.total_price}
                               onChange={(e) => updateItem(index, "total_price", parseFloat(e.target.value) || 0)}
                               placeholder="0.00"
-                              className={`h-7 text-xs font-medium ${item.total_price < 0 ? 'text-green-600' : ''}`}
+                              className="h-7 text-xs font-medium"
                             />
                           </div>
                         </div>
-
-                        {/* Discount association hint */}
-                        {item.is_discount && (
-                          <div className="text-xs text-amber-600 italic">
-                            This is a discount. Consider merging with the item it applies to.
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
