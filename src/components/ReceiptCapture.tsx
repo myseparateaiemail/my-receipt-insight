@@ -232,17 +232,48 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     input.click();
   };
 
+  // Parse receipt date from various formats to YYYY-MM-DD
+  const parseReceiptDate = (dateStr: string): string => {
+    if (!dateStr) return new Date().toISOString().split('T')[0];
+    
+    // Handle format: YY/MM/DD HH:MM:SS (e.g., "25/07/30 19:46:28")
+    const shortYearMatch = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{2})/);
+    if (shortYearMatch) {
+      const [, yy, mm, dd] = shortYearMatch;
+      const year = parseInt(yy) < 50 ? `20${yy}` : `19${yy}`;
+      return `${year}-${mm}-${dd}`;
+    }
+    
+    // Handle format: YYYY-MM-DD (already correct)
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+      return dateStr.split('T')[0];
+    }
+    
+    // Handle format: DD/MM/YYYY or MM/DD/YYYY
+    const longYearMatch = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (longYearMatch) {
+      const [, a, b, year] = longYearMatch;
+      // Assume DD/MM/YYYY for Canadian receipts
+      return `${year}-${b}-${a}`;
+    }
+    
+    // Fallback to today's date
+    return new Date().toISOString().split('T')[0];
+  };
+
   const handleApprove = async (finalData: any) => {
     if (!user || !reviewData) return;
 
     try {
+      const parsedDate = parseReceiptDate(finalData.receipt_date);
+      
       // Create receipt record
       const { data: receipt, error: insertError } = await supabase
         .from('receipts')
         .insert({
           user_id: user.id,
           image_url: reviewData.imageUrl,
-          receipt_date: finalData.receipt_date || new Date().toISOString().split('T')[0],
+          receipt_date: parsedDate,
           total_amount: finalData.total_amount || 0,
           subtotal_amount: finalData.subtotal_amount,
           tax_amount: finalData.tax_amount,
