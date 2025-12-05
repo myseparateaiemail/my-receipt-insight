@@ -13,6 +13,7 @@ interface ReceiptItem {
   quantity?: number;
   unit_price?: number;
   total_price: number;
+  discount_amount?: number;
   category?: string;
   line_number?: number;
   tax_code?: string;
@@ -22,7 +23,6 @@ interface ReceiptItem {
 interface ReceiptData {
   store_name?: string;
   store_address?: string;
-  store_phone?: string;
   receipt_date?: string;
   receipt_number?: string;
   subtotal_amount?: number;
@@ -32,6 +32,7 @@ interface ReceiptData {
   discount_amount?: number;
   payment_method?: string;
   cashier_name?: string;
+  card_last_four?: string;
   items: ReceiptItem[];
 }
 
@@ -53,32 +54,40 @@ async function parseReceiptWithAI(ocrText: string): Promise<ReceiptData> {
     return basicParseFallback(ocrText);
   }
 
-  const systemPrompt = `You are a receipt parser. Extract structured data from receipt OCR text.
+  const systemPrompt = `You are a receipt parser. Extract structured data from Real Canadian Superstore receipt OCR text.
 
-IMPORTANT RULES:
-1. Extract ALL line items - every product purchased must be included
-2. For items with quantity notation like "(2)SKU NAME" or "2 @ $X.XX", set quantity appropriately
-3. For weight-based items like "0.310 kg @ $5.49/kg", extract the weight as quantity and per-kg price as unit_price
-4. SKU/product codes are the numeric codes (8-14 digits) that appear before product names
-5. Tax codes like MRJ, HMRJ should be captured but not displayed
-6. Categories should be inferred from section headers (21-GROCERY, 22-DAIRY, 27-PRODUCE, 31-MEATS, 34-BAKERY, 39-PERSONAL CARE, 41-HOME, 42-ENTERTAINMENT)
-7. The TOTAL is the final amount paid (look for "TOTAL" followed by a number, usually after SUBTOTAL and tax)
-8. Items with asterisk (*) prefix are price-matched items - still include them
-9. Discount lines like "ARCP: 30.00% ($12.00) -3.60" should be captured as negative adjustments
+CRITICAL RULES:
+1. Extract ALL line items - every product purchased must be included as a separate item
+2. DISCOUNTS: Lines like "ARCP: 30.00% ($4.50) -1.35" are discounts that apply to the PREVIOUS product item. DO NOT create a separate item for discounts. Instead, add the discount_amount to the previous item. The discount amount is the negative number (e.g., -1.35).
+3. MULTI-BUY PRICING: For items with pricing like "$0.69 ea or 4/$2.00", if the quantity meets the multi-buy threshold (e.g., 4 items), use the multi-buy price (e.g., $2.00 total for 4, so $0.50 each). If quantity is less, use regular unit price.
+4. For items with quantity notation like "(2)SKU NAME" or "2 @ $X.XX", set quantity appropriately
+5. For weight-based items like "0.315 kg @ $12.10/kg", extract the weight as quantity and per-kg price as unit_price
+6. SKU/product codes are the numeric codes (4-14 digits) that appear before product names. PLU codes for produce are 4-5 digits.
+7. Tax codes like MRJ (non-taxable), HMRJ (taxable) should be captured but not displayed
+8. CATEGORIES - be specific:
+   - Produce: ALL fruits and vegetables (limes, peppers, cucumbers, lettuce, apples, etc.)
+   - Dips: guacamole, salsa, hummus, dips
+   - Deli: deli meats, cheeses from deli counter
+   - Snacks: chips, crackers, popcorn
+   - Pantry: canned goods, beans, rice, pasta
+   - Dairy: milk, yogurt, cheese, butter
+9. The TOTAL is the final amount paid (look for "TOTAL" followed by a number)
+10. Extract the last 4 digits of the payment card from "Card Number: ***************XXXX"
+11. Items with asterisk (*) prefix are price-matched items - still include them
 
-Category mappings:
-- 21-GROCERY → Pantry
-- 22-DAIRY → Dairy
-- 27-PRODUCE → Produce
-- 31-MEATS → Meats
-- 34-BAKERY → Bakery
-- 39-PERSONAL CARE → Personal Care
-- 41-HOME → Household
-- 42-ENTERTAINMENT → Entertainment`;
+PRODUCE items (PLU codes 3000-4999 or 94000-99999): ALWAYS categorize as "Produce"
+Examples: LIME, RED PEPPERS, CUCUMBER, BANANA, APPLE, LETTUCE, TOMATO, ONION, etc.`;
 
   const userPrompt = `Parse this receipt OCR text and extract all data:
 
 ${ocrText}
+
+REMEMBER: 
+- Discount lines (ARCP, etc.) should NOT be separate items - add the discount to the previous item's discount_amount field
+- Multi-buy pricing: if quantity meets threshold, calculate unit price based on multi-buy deal
+- ALL fruits and vegetables must be categorized as "Produce"
+- Guacamole, salsa, hummus = "Dips" category
+- Extract card last 4 digits from the card number line
 
 Return the structured receipt data.`;
 
@@ -104,25 +113,26 @@ Return the structured receipt data.`;
               type: 'object',
               properties: {
                 store_name: { type: 'string', description: 'Name of the store' },
-                store_phone: { type: 'string', description: 'Store phone number' },
                 store_address: { type: 'string', description: 'Store address if present' },
                 receipt_date: { type: 'string', description: 'Date and time of purchase (format: YY/MM/DD HH:MM:SS or similar)' },
                 subtotal_amount: { type: 'number', description: 'Subtotal before tax' },
                 tax_amount: { type: 'number', description: 'Tax amount (HST/GST)' },
                 total_amount: { type: 'number', description: 'Final total amount paid' },
-                payment_method: { type: 'string', description: 'Payment method used (e.g., Card Type: DEBIT)' },
+                payment_method: { type: 'string', description: 'Payment method used (e.g., DEBIT, CREDIT)' },
+                card_last_four: { type: 'string', description: 'Last 4 digits of payment card (from Card Number: ***************XXXX)' },
                 items: {
                   type: 'array',
-                  description: 'All purchased items',
+                  description: 'All purchased items (NOT including discount lines as separate items)',
                   items: {
                     type: 'object',
                     properties: {
                       item_name: { type: 'string', description: 'Product name from receipt' },
-                      product_code: { type: 'string', description: 'SKU or product code (numeric)' },
+                      product_code: { type: 'string', description: 'SKU or PLU code (numeric)' },
                       quantity: { type: 'number', description: 'Quantity purchased (default 1, or weight for produce)' },
-                      unit_price: { type: 'number', description: 'Price per unit or per kg' },
-                      total_price: { type: 'number', description: 'Total price for this line item' },
-                      category: { type: 'string', description: 'Category: Pantry, Dairy, Produce, Meats, Bakery, Personal Care, Household, Entertainment' },
+                      unit_price: { type: 'number', description: 'Price per unit or per kg (use multi-buy price if applicable)' },
+                      total_price: { type: 'number', description: 'Final total price AFTER any discounts' },
+                      discount_amount: { type: 'number', description: 'Discount amount if any (as positive number, e.g., 1.35 not -1.35)' },
+                      category: { type: 'string', description: 'Category: Produce, Dips, Deli, Snacks, Pantry, Dairy, Meats, Bakery, Beverages, Frozen, Household, Personal Care' },
                       tax_code: { type: 'string', description: 'Tax code like MRJ or HMRJ if present' }
                     },
                     required: ['item_name', 'total_price']
@@ -162,20 +172,21 @@ Return the structured receipt data.`;
       // Validate and clean the parsed data
       const result: ReceiptData = {
         store_name: parsed.store_name || 'Unknown Store',
-        store_phone: parsed.store_phone,
         store_address: parsed.store_address,
         receipt_date: parsed.receipt_date,
         subtotal_amount: parsed.subtotal_amount,
         tax_amount: parsed.tax_amount,
         total_amount: parsed.total_amount,
         payment_method: parsed.payment_method,
+        card_last_four: parsed.card_last_four,
         items: (parsed.items || []).map((item: any, idx: number) => ({
           item_name: cleanProductName(item.item_name || 'Unknown Item'),
           product_code: item.product_code,
           quantity: item.quantity || 1,
           unit_price: item.unit_price || item.total_price,
           total_price: item.total_price || 0,
-          category: item.category || 'Pantry',
+          discount_amount: item.discount_amount || 0,
+          category: correctCategory(item.item_name, item.product_code, item.category),
           line_number: idx + 1,
           tax_code: item.tax_code
         }))
@@ -218,13 +229,13 @@ function basicParseFallback(text: string): ReceiptData {
     result.store_name = 'REAL CANADIAN SUPERSTORE';
   }
   
-  // Extract phone
-  const phoneMatch = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  if (phoneMatch) result.store_phone = phoneMatch[0];
-  
   // Extract date
   const dateMatch = text.match(/(\d{2}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})/);
   if (dateMatch) result.receipt_date = dateMatch[1];
+  
+  // Extract card last 4 digits
+  const cardMatch = text.match(/Card Number:\s*\*+(\d{4})/);
+  if (cardMatch) result.card_last_four = cardMatch[1];
   
   // Extract totals
   const subtotalMatch = text.match(/SUBTOTAL\s+(\d+\.?\d*)/i);
@@ -237,8 +248,8 @@ function basicParseFallback(text: string): ReceiptData {
   if (totalMatch) result.total_amount = parseFloat(totalMatch[1]);
   
   // Payment method
-  if (text.includes('DEBIT')) result.payment_method = 'Card Type: DEBIT';
-  else if (text.includes('CREDIT')) result.payment_method = 'Card Type: CREDIT';
+  if (text.includes('DEBIT')) result.payment_method = 'DEBIT';
+  else if (text.includes('CREDIT')) result.payment_method = 'CREDIT';
   
   // Basic item extraction - look for SKU + name + price patterns
   const itemPattern = /(\d{8,14})\s+([A-Z][A-Z0-9\s]+?)\s+(H?MRJ)?\s*(\d+\.\d{2})/g;
@@ -246,13 +257,14 @@ function basicParseFallback(text: string): ReceiptData {
   let lineNum = 1;
   
   while ((match = itemPattern.exec(text)) !== null) {
+    const itemName = match[2].trim();
     result.items.push({
       product_code: match[1],
-      item_name: cleanProductName(match[2].trim()),
+      item_name: cleanProductName(itemName),
       total_price: parseFloat(match[4]),
       quantity: 1,
       unit_price: parseFloat(match[4]),
-      category: 'Pantry',
+      category: correctCategory(itemName, match[1], 'Pantry'),
       line_number: lineNum++
     });
   }
@@ -263,6 +275,50 @@ function basicParseFallback(text: string): ReceiptData {
   }
   
   return result;
+}
+
+// Correct category based on item name and PLU code
+function correctCategory(itemName: string, productCode?: string, suggestedCategory?: string): string {
+  const name = (itemName || '').toLowerCase();
+  const code = productCode || '';
+  
+  // PLU codes for produce are typically 4-5 digits starting with 3, 4, or 9
+  const isPluProduce = /^[349]\d{3,4}$/.test(code);
+  
+  // Produce items - fruits and vegetables
+  const produceKeywords = [
+    'lime', 'lemon', 'orange', 'apple', 'banana', 'grape', 'berry', 'melon',
+    'pepper', 'tomato', 'cucumber', 'lettuce', 'onion', 'garlic', 'potato',
+    'carrot', 'celery', 'broccoli', 'cauliflower', 'spinach', 'kale',
+    'avocado', 'mango', 'pineapple', 'peach', 'plum', 'cherry', 'pear',
+    'zucchini', 'squash', 'corn', 'mushroom', 'cabbage', 'asparagus',
+    'green bean', 'snap pea', 'radish', 'beet', 'turnip', 'parsnip',
+    'ginger', 'cilantro', 'parsley', 'basil', 'mint', 'dill', 'herb'
+  ];
+  
+  // Dips category
+  const dipsKeywords = ['guacamole', 'guacamo', 'salsa', 'hummus', 'dip', 'tzatziki', 'queso'];
+  
+  // Check for dips first (more specific)
+  for (const keyword of dipsKeywords) {
+    if (name.includes(keyword)) {
+      return 'Dips';
+    }
+  }
+  
+  // Check for produce
+  if (isPluProduce) {
+    return 'Produce';
+  }
+  
+  for (const keyword of produceKeywords) {
+    if (name.includes(keyword)) {
+      return 'Produce';
+    }
+  }
+  
+  // Default to suggested category or Pantry
+  return suggestedCategory || 'Pantry';
 }
 
 function cleanProductName(name: string): string {
