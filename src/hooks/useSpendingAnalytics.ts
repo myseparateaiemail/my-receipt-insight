@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { format, subMonths, startOfMonth } from "date-fns";
 
 interface CategorySpending {
   category: string;
@@ -24,6 +25,11 @@ interface SpendingAnalytics {
   topCategory: string;
 }
 
+export interface DateRange {
+  from: Date;
+  to: Date;
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   Produce: "hsl(142, 71%, 45%)",
   Dairy: "hsl(197, 71%, 73%)",
@@ -38,15 +44,24 @@ const CATEGORY_COLORS: Record<string, string> = {
   Other: "hsl(220, 13%, 50%)",
 };
 
-export const useSpendingAnalytics = () => {
+export const useSpendingAnalytics = (dateRange?: DateRange) => {
   const { user } = useAuth();
 
+  // Default to last 6 months if no range provided
+  const defaultFrom = startOfMonth(subMonths(new Date(), 5));
+  const defaultTo = new Date();
+  const fromDate = dateRange?.from || defaultFrom;
+  const toDate = dateRange?.to || defaultTo;
+
   return useQuery<SpendingAnalytics>({
-    queryKey: ["spending-analytics", user?.id],
+    queryKey: ["spending-analytics", user?.id, format(fromDate, "yyyy-MM-dd"), format(toDate, "yyyy-MM-dd")],
     queryFn: async () => {
       if (!user) throw new Error("User not authenticated");
 
-      // Fetch all receipt items with their categories
+      const fromStr = format(fromDate, "yyyy-MM-dd");
+      const toStr = format(toDate, "yyyy-MM-dd");
+
+      // Fetch all receipt items with their categories within date range
       const { data: items, error: itemsError } = await supabase
         .from("receipt_items")
         .select(`
@@ -57,15 +72,19 @@ export const useSpendingAnalytics = () => {
           receipt_id,
           receipts!inner(user_id, receipt_date)
         `)
-        .eq("receipts.user_id", user.id);
+        .eq("receipts.user_id", user.id)
+        .gte("receipts.receipt_date", fromStr)
+        .lte("receipts.receipt_date", toStr);
 
       if (itemsError) throw itemsError;
 
-      // Fetch receipts for totals
+      // Fetch receipts for totals within date range
       const { data: receipts, error: receiptsError } = await supabase
         .from("receipts")
         .select("id, total_amount, receipt_date")
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .gte("receipt_date", fromStr)
+        .lte("receipt_date", toStr);
 
       if (receiptsError) throw receiptsError;
 
@@ -90,15 +109,15 @@ export const useSpendingAnalytics = () => {
         }))
         .sort((a, b) => b.total - a.total);
 
-      // Calculate monthly trends (last 6 months)
+      // Calculate monthly trends based on date range
       const monthlyData: Record<string, { total: number; categories: Record<string, number> }> = {};
-      const now = new Date();
       
-      // Initialize last 6 months
-      for (let i = 5; i >= 0; i--) {
-        const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const monthKey = date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+      // Initialize months within the range
+      let currentDate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+      while (currentDate <= toDate) {
+        const monthKey = currentDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
         monthlyData[monthKey] = { total: 0, categories: {} };
+        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
       }
 
       (items || []).forEach((item) => {

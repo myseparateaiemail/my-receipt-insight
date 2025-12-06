@@ -1,20 +1,28 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { subMonths, startOfMonth } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
-import { useSpendingAnalytics } from "@/hooks/useSpendingAnalytics";
+import { useSpendingAnalytics, DateRange } from "@/hooks/useSpendingAnalytics";
 import { Header } from "@/components/Header";
 import { AnalyticsSummary } from "@/components/analytics/AnalyticsSummary";
 import { CategoryPieChart } from "@/components/analytics/CategoryPieChart";
 import { MonthlyTrendChart } from "@/components/analytics/MonthlyTrendChart";
 import { CategoryBarChart } from "@/components/analytics/CategoryBarChart";
 import { CategoryTable } from "@/components/analytics/CategoryTable";
+import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
 const Analytics = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const { data, isLoading, error, refetch } = useSpendingAnalytics();
+  
+  const [dateRange, setDateRange] = useState<DateRange>({
+    from: startOfMonth(subMonths(new Date(), 5)),
+    to: new Date(),
+  });
+
+  const { data, isLoading, error, refetch } = useSpendingAnalytics(dateRange);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -60,7 +68,7 @@ const Analytics = () => {
 
       <div className="container mx-auto px-4 py-8">
         {/* Page Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="sm">
@@ -75,10 +83,13 @@ const Analytics = () => {
               </p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* Summary Cards */}
