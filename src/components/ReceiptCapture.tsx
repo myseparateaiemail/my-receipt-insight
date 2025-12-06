@@ -278,7 +278,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           subtotal_amount: finalData.subtotal_amount,
           tax_amount: finalData.tax_amount,
           store_name: finalData.store_name,
-          store_phone: finalData.store_phone,
+          card_last_four: finalData.card_last_four,
           payment_method: finalData.payment_method,
           ocr_text: reviewData.rawText,
           processing_status: 'completed'
@@ -307,6 +307,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               quantity: item.quantity,
               total_price: item.total_price,
               unit_price: item.unit_price,
+              discount_amount: item.discount_amount || 0,
               product_code: item.product_code,
               line_number: item.line_number,
               category: item.category,
