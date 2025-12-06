@@ -168,6 +168,7 @@ export type Database = {
       }
       receipts: {
         Row: {
+          card_last_four: string | null
           cashier_name: string | null
           confidence_score: number | null
           created_at: string
@@ -192,6 +193,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          card_last_four?: string | null
           cashier_name?: string | null
           confidence_score?: number | null
           created_at?: string
@@ -216,6 +218,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          card_last_four?: string | null
           cashier_name?: string | null
           confidence_score?: number | null
           created_at?: string
