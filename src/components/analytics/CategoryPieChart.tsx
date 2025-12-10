@@ -1,4 +1,5 @@
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, TooltipProps } from "recharts";
+import { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart as PieChartIcon } from "lucide-react";
 
@@ -9,12 +10,18 @@ interface CategoryData {
   color: string;
 }
 
+interface ChartDataItem {
+  name: string;
+  value: number;
+  color: string;
+}
+
 interface CategoryPieChartProps {
   data: CategoryData[];
 }
 
 export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
-  const chartData = data.map((item) => ({
+  const chartData: ChartDataItem[] = data.map((item) => ({
     name: item.category,
     value: item.total,
     color: item.color,
@@ -22,9 +29,9 @@ export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
 
   const totalSpending = data.reduce((sum, item) => sum + item.total, 0);
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: TooltipProps<ValueType, NameType>) => {
     if (active && payload && payload.length) {
-      const data = payload[0].payload;
+      const data = payload[0].payload as ChartDataItem;
       const percentage = ((data.value / totalSpending) * 100).toFixed(1);
       return (
         <div className="bg-card border border-border rounded-lg p-3 shadow-lg">

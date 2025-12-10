@@ -44,8 +44,53 @@ Even after successfully reconfiguring the application to run on a free port (`90
     *   An attempt to use `sudo` to gain the necessary permissions failed, as passwordless `sudo` was not enabled.
     *   A final, exhaustive review of all running processes with `ps aux` did not reveal any identifiable culprit.
 
-**Final Conclusion & Resolution:**
+***
 
-We have exhausted all diagnostic and repair tools available within this environment. The root cause is a **rogue, privileged process that is holding port `9000` hostage.** The IDE's preview functionality appears to be unchangeably hardcoded to this same port, creating a conflict that cannot be resolved from within the running workspace.
+### Phase 3: Holistic Environment Audit & Standardization (Current Status)
 
-**The only remaining solution is to perform a full restart of the development environment.** This action will terminate all running processes, including the unidentified one blocking the port, and allow the system to restart in a clean state with our corrected configurations.
+**Diagnosis:**
+The project suffered from a "civil war" of configurations.
+*   `vite.config.ts` was hardcoded to `port: 9001`.
+*   `package.json` forced `vite --port 9000`.
+*   `.idx/dev.nix` **missing the `idx.previews` block entirely**, meaning the IDE had no instruction on how to run the app and likely defaulted to a broken state or conflicted with the other configs.
+*   Port 9000 was confirmed to be blocked by a privileged process (likely a zombie service).
+
+**Action Taken:**
+We have moved the entire project to **Port 3000** to avoid the 9000/9001/5173 conflict zones.
+
+1.  **`vite.config.ts`**: Updated `server.port` to `3000`.
+2.  **`package.json`**: Updated `dev` script to `vite --port 3000 --host`.
+3.  **`.idx/dev.nix`**: Added the missing `idx.previews` block to explicitly command the IDE to run `npm run dev` and listen on `$PORT` (which will map to 3000).
+4.  **`supabase/config.toml`**: Updated redirect URLs to use `3000-` prefix instead of `9000-`.
+
+**Immediate Next Step:**
+The user is **Rebuilding the Environment**. This is required to load the new `.idx/dev.nix` configuration.
+
+---
+
+### ⚠️ INSTRUCTIONS FOR THE NEXT AGENT (If Rebuild Fails)
+
+If the user returns after the rebuild and the app is still broken, **DO NOT start changing ports randomly.** Follow this logic:
+
+**Scenario 1: Still "502 Bad Gateway"**
+*   **Check:** Open the terminal and run `curl -v http://localhost:3000`.
+    *   *If connection refused:* The server isn't running. Run `npm run dev` manually in the terminal and see why it fails.
+    *   *If successful (200 OK):* The server is fine, but the IDE Preview is looking at the wrong place. Check `.idx/dev.nix` again.
+*   **Check:** Verify `vite.config.ts` hasn't been reverted.
+
+**Scenario 2: "Port 3000 is already in use"**
+*   If Port 3000 is *also* blocked (unlikely), pick a random high port (e.g., `3005`) and update ALL FOUR files again:
+    1.  `vite.config.ts`
+    2.  `package.json`
+    3.  `.idx/dev.nix`
+    4.  `supabase/config.toml`
+
+**Scenario 3: App Loads, but "Auth Configuration Missing" or Login Fails**
+*   This is expected because we changed the port, so the Redirect URL in Supabase is wrong.
+*   **Fix:**
+    1.  Look at the browser URL bar in the preview (e.g., `https://3000-project-id.cluster.dev`).
+    2.  Copy that **exact base URL**.
+    3.  Update `supabase/config.toml`: `site_url` and `additional_redirect_urls` with this new URL.
+    4.  (If using local Supabase) You might need to restart Supabase: `npx supabase stop && npx supabase start`.
+
+**Goal:** Keep the configuration **holistic**. Do not change one file without changing the others.

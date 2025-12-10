@@ -7,33 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-
-interface ReceiptItem {
-  item_name: string;
-  product_code?: string;
-  quantity: number;
-  total_price: number;
-  unit_price: number;
-  discount_amount?: number;
-  line_number?: number;
-  category?: string;
-  size?: string;
-  brand?: string;
-  description?: string;
-  confidence?: 'verified' | 'ai_suggested' | 'fallback';
-}
-
-interface ParsedReceiptData {
-  items: ReceiptItem[];
-  store_name?: string;
-  tax_amount?: number;
-  payment_method?: string;
-  receipt_date?: string;
-  subtotal_amount?: number;
-  total_amount?: number;
-  card_last_four?: string;
-}
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { ParsedReceiptData, OcrItem } from "@/types";
 
 interface ReceiptReviewProps {
   receiptImage: string;

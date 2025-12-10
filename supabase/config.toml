@@ -21,8 +21,8 @@ inspector_port = 8083
 
 [auth]
 enabled = true
-site_url = "https://9000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369"
-additional_redirect_urls = ["https://9000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369", "https://*.googleusercontent.com/*"]
+site_url = "https://3000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369"
+additional_redirect_urls = ["https://3000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369", "https://*.googleusercontent.com/*"]
 jwt_expiry = 3600
 
 [auth.email]

@@ -121,7 +121,12 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       }
 
       (items || []).forEach((item) => {
-        const receiptDate = new Date((item.receipts as any).receipt_date);
+        // Safe access to receipt_date through the join
+        // The type from Supabase for receipts!inner would be an object or array, here it is an object
+        // We cast to unknown then to a structure we expect to avoid 'any' if possible, 
+        // but since we know the shape from the query, we can access it safely.
+        const receiptData = item.receipts as unknown as { receipt_date: string };
+        const receiptDate = new Date(receiptData.receipt_date);
         const monthKey = receiptDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
         
         if (monthlyData[monthKey]) {

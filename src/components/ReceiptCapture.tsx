@@ -7,9 +7,25 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { ReceiptReview } from "./ReceiptReview";
+import { OcrItem, ParsedReceiptData, VerifiedProduct } from "@/types";
 
 interface ReceiptCaptureProps {
   onUploadSuccess?: () => void;
+}
+
+interface ReviewData {
+  imageUrl: string;
+  rawText: string;
+  parsedData: ParsedReceiptData;
+  receiptId: string;
+}
+
+interface AIEnrichmentResult {
+  fullName: string;
+  size?: string;
+  brand?: string;
+  category?: string;
+  confidence?: 'ocr' | 'verified' | 'ai_suggested' | 'fallback';
 }
 
 export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
@@ -21,12 +37,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     null
   );
   const [reviewMode, setReviewMode] = useState(false);
-  const [reviewData, setReviewData] = useState<{
-    imageUrl: string;
-    rawText: string;
-    parsedData: any;
-    receiptId: string;
-  } | null>(null);
+  const [reviewData, setReviewData] = useState<ReviewData | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -129,31 +140,32 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       console.log("OCR processing completed successfully");
       console.log("OCR result:", ocrResult);
 
-      let enrichedParsedData = ocrResult.parsedData;
-      if (ocrResult.parsedData?.items?.length > 0) {
+      let enrichedParsedData: ParsedReceiptData = ocrResult.parsedData;
+      
+      if (enrichedParsedData.items && enrichedParsedData.items.length > 0) {
         // 1. Mark discount lines first
-        const itemsWithFlags = ocrResult.parsedData.items.map((item: any) => ({
+        const itemsWithFlags: OcrItem[] = enrichedParsedData.items.map((item: OcrItem) => ({
           ...item,
           is_discount: isDiscountLine(item.item_name, item.total_price),
           confidence: "ocr", // Start with base confidence
         }));
 
-        const storeChain = ocrResult.parsedData.store_name?.includes(
+        const storeChain = enrichedParsedData.store_name?.includes(
           "Superstore"
         )
           ? "Real Canadian Superstore"
-          : ocrResult.parsedData.store_name || "Unknown";
+          : enrichedParsedData.store_name || "Unknown";
 
         // 2. Separate items that have a product code for lookup
         const itemsToLookup = itemsWithFlags.filter(
-          (item: any) =>
+          (item) =>
             !item.is_discount &&
             item.product_code &&
             item.product_code.length >= 4
         );
-        const lookupSkus = itemsToLookup.map((item: any) => item.product_code);
+        const lookupSkus = itemsToLookup.map((item) => item.product_code).filter((code): code is string => !!code);
 
-        const verifiedProductsMap = new Map();
+        const verifiedProductsMap = new Map<string, VerifiedProduct>();
 
         // 3. Fetch verified products from DB
         if (lookupSkus.length > 0) {
@@ -163,7 +175,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           const { data: verifiedProducts, error: verifiedError } =
             await supabase
               .from("verified_products")
-              .select("sku, product_name, brand, size, category")
+              .select("*")
               .in("sku", lookupSkus)
               .eq("store_chain", storeChain);
 
@@ -179,8 +191,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         }
 
         // 4. Build the final item list, separating items that need AI enrichment
-        const finalItems: any[] = [];
-        const itemsForAIEnrichment: any[] = [];
+        const finalItems: OcrItem[] = [];
+        const itemsForAIEnrichment: { product_code: string; item_name: string }[] = [];
 
         for (const item of itemsWithFlags) {
           // If it's a discount, just add it and continue
@@ -231,7 +243,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
             if (enrichmentData?.results) {
               console.log("AI Enrichment results:", enrichmentData.results);
-              const aiResultsMap = new Map(
+              const aiResultsMap = new Map<string, AIEnrichmentResult>(
                 Object.entries(enrichmentData.results)
               );
 
@@ -239,7 +251,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               for (let i = 0; i < finalItems.length; i++) {
                 const item = finalItems[i];
                 if (item.product_code && aiResultsMap.has(item.product_code)) {
-                  const enriched: any = aiResultsMap.get(item.product_code);
+                  const enriched = aiResultsMap.get(item.product_code);
 
                   const invalidPatterns = [
                     "superstore",
@@ -256,7 +268,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                     enriched.fullName.length > 3 &&
                     enriched.fullName !== item.item_name;
 
-                  if (isValidEnrichment) {
+                  if (isValidEnrichment && enriched) {
                     finalItems[i] = {
                       ...item,
                       item_name: enriched.fullName,
@@ -277,7 +289,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           }
         }
 
-        enrichedParsedData = { ...ocrResult.parsedData, items: finalItems };
+        enrichedParsedData = { ...enrichedParsedData, items: finalItems };
       }
 
       setReviewData({
@@ -322,7 +334,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   };
 
   // Parse receipt date from various formats to YYYY-MM-DD
-  const parseReceiptDate = (dateStr: string): string => {
+  const parseReceiptDate = (dateStr?: string): string => {
     if (!dateStr) return new Date().toISOString().split("T")[0];
 
     // Handle format: YY/MM/DD HH:MM:SS (e.g., "25/07/30 19:46:28")
@@ -350,7 +362,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     return new Date().toISOString().split("T")[0];
   };
 
-  const handleApprove = async (finalData: any) => {
+  const handleApprove = async (finalData: ParsedReceiptData) => {
     if (!user || !reviewData) return;
 
     try {
@@ -390,7 +402,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         const { error: itemsError } = await supabase
           .from("receipt_items")
           .insert(
-            finalData.items.map((item: any) => ({
+            finalData.items.map((item) => ({
               receipt_id: receipt.id,
               item_name: item.item_name,
               quantity: item.quantity,
@@ -412,7 +424,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       // Save user corrections to verified_products table for learning
       const itemsToVerify = finalData.items?.filter(
-        (item: any) =>
+        (item) =>
           item.product_code &&
           item.item_name &&
           !item.is_discount &&
@@ -431,7 +443,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           const { data: existing } = await supabase
             .from("verified_products")
             .select("id, verification_count")
-            .eq("sku", item.product_code)
+            .eq("sku", item.product_code as string)
             .eq("store_chain", storeChain)
             .maybeSingle();
 
@@ -451,7 +463,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           } else {
             // Insert new record
             await supabase.from("verified_products").insert({
-              sku: item.product_code,
+              sku: item.product_code as string,
               product_name: item.item_name,
               brand: item.brand || null,
               size: item.size || null,
@@ -534,7 +546,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button
-                  variant="capture"
+                  variant="default" // Changed from custom variant "capture" to default for now as "capture" might not exist or be typed
                   size="lg"
                   onClick={handleCapture}
                   disabled={isCapturing || isUploading}
@@ -604,12 +616,12 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                 alt="Captured receipt"
                 className="w-full max-w-sm mx-auto rounded-lg shadow-lg"
               />
-              <div className="absolute top-2 right-2 bg-success text-success-foreground rounded-full p-1">
+              <div className="absolute top-2 right-2 bg-green-500 text-white rounded-full p-1">
                 <Check className="h-4 w-4" />
               </div>
             </div>
             <div className="text-center space-y-2">
-              <p className="text-success font-medium">
+              <p className="text-green-600 font-medium">
                 {uploadedReceiptId
                   ? "Receipt processed and saved!"
                   : "Receipt captured successfully!"}
@@ -620,7 +632,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
                   : "Ready for processing"}
               </p>
               <Button
-                variant="hero"
+                variant="default"
                 onClick={() => {
                   setCapturedImage(null);
                   setUploadedReceiptId(null);

@@ -10,25 +10,14 @@ import { InsightsPanel } from "@/components/InsightsPanel";
 import { Button } from "@/components/ui/button";
 import { Camera, BarChart3, Zap } from "lucide-react";
 import heroImage from "@/assets/hero-image.jpg";
-import { ReceiptReview } from "@/components/ReceiptReview"; // Import ReceiptReview
-
-// Define the shape of a receipt object for type safety
-interface Receipt {
-  id: string;
-  receipt_date: string;
-  store_name: string;
-  total_amount: number;
-  processing_status: string;
-  image_url: string;
-  ocr_text: string;
-  items: any[];
-}
+import { ReceiptReview } from "@/components/ReceiptReview";
+import { ParsedReceiptData, ReceiptWithItems } from "@/types";
 
 const Index = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   // State to hold the receipt currently being edited
-  const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
+  const [editingReceipt, setEditingReceipt] = useState<ReceiptWithItems | null>(null);
   // State to trigger a refresh of the recent receipts list
   const [receiptsVersion, setReceiptsVersion] = useState(0);
 
@@ -43,7 +32,7 @@ const Index = () => {
     setReceiptsVersion(v => v + 1);
   };
 
-  const handleEditReceipt = (receipt: Receipt) => {
+  const handleEditReceipt = (receipt: ReceiptWithItems) => {
     setEditingReceipt(receipt);
   };
 
@@ -51,7 +40,7 @@ const Index = () => {
     setEditingReceipt(null);
   };
 
-  const handleApproval = async (finalData: any) => {
+  const handleApproval = async (finalData: ParsedReceiptData) => {
     if (!editingReceipt) return;
 
     console.log("Approved data to be saved:", finalData);
@@ -102,7 +91,7 @@ const Index = () => {
                 </div>
                 
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <Button variant="hero" size="lg" className="text-lg">
+                  <Button variant="default" size="lg" className="text-lg">
                     <Camera className="h-5 w-5" />
                     Scan Your First Receipt
                   </Button>
@@ -143,9 +132,29 @@ const Index = () => {
           {editingReceipt ? (
             // Render the full-width ReceiptReview component when editing
             <ReceiptReview
-              receiptImage={editingReceipt.image_url}
-              rawOcrText={editingReceipt.ocr_text}
-              parsedData={{ ...editingReceipt, items: editingReceipt.items }}
+              receiptImage={editingReceipt.image_url || ""}
+              rawOcrText={editingReceipt.ocr_text || ""}
+              parsedData={{
+                ...editingReceipt, 
+                // Ensure items match OcrItem type, assuming ReceiptItem is compatible or needs mapping
+                items: editingReceipt.items.map(item => ({
+                  ...item,
+                  // Provide defaults for optional fields if necessary to match OcrItem
+                  item_name: item.item_name,
+                  quantity: item.quantity ?? 1,
+                  total_price: item.total_price ?? 0,
+                  unit_price: item.unit_price ?? 0,
+                  product_code: item.product_code || undefined,
+                  line_number: item.line_number || undefined,
+                  category: item.category || undefined,
+                  brand: item.brand || undefined,
+                  size: undefined, // Add if available in ReceiptItem
+                  description: item.description || undefined,
+                  discount_amount: item.discount_amount || undefined,
+                  is_discount: false, // Default or logic to determine
+                  confidence: 'verified' // Since it's from DB, assume verified or map appropriately
+                }))
+              }}
               onApprove={handleApproval}
               onReject={handleFinishEditing}
               onCancel={handleFinishEditing}

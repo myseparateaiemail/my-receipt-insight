@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../integrations/supabase/client';
 import { Button } from './ui/button';
@@ -6,25 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Badge } from './ui/badge';
 import { Camera } from 'lucide-react';
-
-// Define the type for a receipt
-interface Receipt {
-  id: string;
-  receipt_date: string;
-  store_name: string;
-  total_amount: number;
-  processing_status: string;
-  image_url: string;
-  ocr_text: string;
-  items: any[];
-}
+import { ReceiptWithItems } from '@/types';
 
 interface RecentReceiptsProps {
-  onEditReceipt: (receipt: Receipt) => void;
+  onEditReceipt: (receipt: ReceiptWithItems) => void;
 }
 
 const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptWithItems[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -34,6 +22,7 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
 
   const fetchReceipts = async () => {
     setLoading(true);
+    // Supabase query to get receipts with their items
     const { data, error } = await supabase
       .from('receipts')
       .select('*, items:receipt_items(*)')
@@ -43,7 +32,9 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
       console.error('Error fetching receipts:', error);
       setError(error.message);
     } else {
-      setReceipts(data as Receipt[]);
+      // Cast the result to the expected type, assuming Supabase types align or handling potential mismatches
+      // The `items` property from the join needs to be compatible with ReceiptWithItems['items']
+      setReceipts(data as unknown as ReceiptWithItems[]);
     }
     setLoading(false);
   };
@@ -97,7 +88,7 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
                   <TableCell>{receipt.store_name}</TableCell>
                   <TableCell>${receipt.total_amount.toFixed(2)}</TableCell>
                   <TableCell>
-                    <Badge variant={receipt.processing_status === 'completed' ? 'success' : 'secondary'}>
+                    <Badge variant={receipt.processing_status === 'completed' ? 'secondary' : 'secondary'}>
                       {receipt.processing_status}
                     </Badge>
                   </TableCell>

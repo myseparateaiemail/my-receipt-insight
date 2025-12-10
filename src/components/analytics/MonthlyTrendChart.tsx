@@ -6,7 +6,9 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  TooltipProps,
 } from "recharts";
+import { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp } from "lucide-react";
 
@@ -21,13 +23,13 @@ interface MonthlyTrendChartProps {
 }
 
 export const MonthlyTrendChart = ({ data }: MonthlyTrendChartProps) => {
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: TooltipProps<ValueType, NameType>) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-card border border-border rounded-lg p-3 shadow-lg">
           <p className="font-semibold text-foreground mb-2">{label}</p>
           <p className="text-sm text-primary font-medium">
-            Total: ${payload[0].value.toFixed(2)}
+            Total: ${Number(payload[0].value).toFixed(2)}
           </p>
         </div>
       );
