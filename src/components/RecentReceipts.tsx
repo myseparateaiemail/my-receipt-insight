@@ -1,102 +1,118 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Receipt, MapPin, Clock, Eye } from "lucide-react";
 
-export const RecentReceipts = () => {
-  const receipts = [
-    {
-      id: 1,
-      store: "Whole Foods Market",
-      amount: "$87.43",
-      date: "Today, 2:30 PM",
-      items: 12,
-      status: "processed",
-      location: "Downtown"
-    },
-    {
-      id: 2,
-      store: "Trader Joe's",
-      amount: "$45.67",
-      date: "Yesterday, 6:15 PM",
-      items: 8,
-      status: "processed", 
-      location: "Westside"
-    },
-    {
-      id: 3,
-      store: "Safeway",
-      amount: "$123.89",
-      date: "3 days ago",
-      items: 18,
-      status: "processing",
-      location: "North Beach"
-    },
-    {
-      id: 4,
-      store: "Target",
-      amount: "$67.21",
-      date: "5 days ago", 
-      items: 9,
-      status: "processed",
-      location: "Mission Bay"
+import { useEffect, useState } from 'react';
+import { supabase } from '../integrations/supabase/client';
+import { Button } from './ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { Badge } from './ui/badge';
+import { Camera } from 'lucide-react';
+
+// Define the type for a receipt
+interface Receipt {
+  id: string;
+  receipt_date: string;
+  store_name: string;
+  total_amount: number;
+  processing_status: string;
+  image_url: string;
+  ocr_text: string;
+  items: any[];
+}
+
+interface RecentReceiptsProps {
+  onEditReceipt: (receipt: Receipt) => void;
+}
+
+const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchReceipts();
+  }, []);
+
+  const fetchReceipts = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('receipts')
+      .select('*, items:receipt_items(*)')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching receipts:', error);
+      setError(error.message);
+    } else {
+      setReceipts(data as Receipt[]);
     }
-  ];
+    setLoading(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase.from('receipts').delete().eq('id', id);
+
+    if (error) {
+      console.error('Error deleting receipt:', error);
+      setError(error.message)
+    } else {
+      setReceipts(receipts.filter((r) => r.id !== id));
+    }
+  };
+
+  if (error) {
+    return <div>Error loading receipts: {error}</div>
+  }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Receipt className="h-5 w-5 text-primary" />
-          Recent Receipts
-        </CardTitle>
+        <CardTitle>Recent Receipts</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {receipts.map((receipt) => (
-            <div 
-              key={receipt.id}
-              className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-muted/30 transition-colors"
-            >
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Receipt className="h-4 w-4 text-primary" />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-foreground">{receipt.store}</p>
-                    <Badge variant={receipt.status === 'processed' ? 'default' : 'secondary'}>
-                      {receipt.status}
+        {loading ? (
+          <div className="text-center text-muted-foreground">Loading receipts...</div>
+        ) : receipts.length === 0 ? (
+          <div className="text-center py-12">
+            <Camera className="mx-auto h-12 w-12 text-muted-foreground" />
+            <h3 className="mt-4 text-lg font-semibold">No Receipts Found</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your scanned receipts will appear here. Get started by capturing your first receipt!
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Store</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {receipts.map((receipt) => (
+                <TableRow key={receipt.id}>
+                  <TableCell>{new Date(receipt.receipt_date).toLocaleDateString()}</TableCell>
+                  <TableCell>{receipt.store_name}</TableCell>
+                  <TableCell>${receipt.total_amount.toFixed(2)}</TableCell>
+                  <TableCell>
+                    <Badge variant={receipt.processing_status === 'completed' ? 'success' : 'secondary'}>
+                      {receipt.processing_status}
                     </Badge>
-                  </div>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {receipt.date}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MapPin className="h-3 w-3" />
-                      {receipt.location}
-                    </span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {receipt.items} items
-                  </p>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p className="font-semibold text-foreground">{receipt.amount}</p>
-                </div>
-                <Button variant="ghost" size="sm">
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="outline" size="sm" onClick={() => onEditReceipt(receipt)}>Edit</Button>
+                    <Button variant="destructive" size="sm" onClick={() => handleDelete(receipt.id)} className="ml-2">Delete</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </CardContent>
     </Card>
   );
 };
+
+export default RecentReceipts;

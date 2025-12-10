@@ -8,7 +8,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "@supabase/supabase-js";
-import receiptLettuceIcon from "@/assets/receipt-lettuce-icon.png";
 
 export default function Auth() {
   const [user, setUser] = useState<User | null>(null);
@@ -136,9 +135,7 @@ export default function Auth() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="p-3 rounded-lg bg-gradient-to-br from-primary to-primary-glow">
-              <img src={receiptLettuceIcon} alt="grocer" className="h-8 w-8" />
-            </div>
+            <img src="/grocer-app-icon.png" alt="Grocer app icon" className="h-16 w-16" />
           </div>
           <CardTitle className="text-2xl">Welcome to grocer</CardTitle>
           <p className="text-muted-foreground">Sign in to access your receipt analytics</p>
@@ -149,7 +146,6 @@ export default function Auth() {
               <TabsTrigger value="signin">Sign In</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
             </TabsList>
-            
             <TabsContent value="signin">
               <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2">
@@ -177,7 +173,6 @@ export default function Auth() {
                 </Button>
               </form>
             </TabsContent>
-            
             <TabsContent value="signup">
               <form onSubmit={handleSignUp} className="space-y-4">
                 <div className="space-y-2">

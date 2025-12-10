@@ -45,8 +45,12 @@ export const DashboardStats = () => {
             <CardTitle className="text-sm font-medium text-muted-foreground">
               {stat.title}
             </CardTitle>
-            <div className="p-2 rounded-lg bg-primary/10">
-              <stat.icon className="h-4 w-4 text-primary" />
+            <div className={`p-2 rounded-lg ${
+              stat.trend === 'up' ? 'bg-primary/10' : 'bg-destructive/10'
+            }`}>
+              <stat.icon className={`h-4 w-4 ${
+                stat.trend === 'up' ? 'text-primary' : 'text-destructive'
+              }`} />
             </div>
           </CardHeader>
           <CardContent>
@@ -55,7 +59,7 @@ export const DashboardStats = () => {
             </div>
             <div className="flex items-center gap-2">
               <div className={`flex items-center gap-1 text-sm ${
-                stat.trend === 'up' ? 'text-success' : 'text-warning'
+                stat.trend === 'up' ? 'text-primary' : 'text-destructive'
               }`}>
                 {stat.trend === 'up' ? (
                   <TrendingUp className="h-3 w-3" />

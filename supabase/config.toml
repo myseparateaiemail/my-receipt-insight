@@ -16,13 +16,13 @@ port = 54323
 
 [edge_runtime]
 enabled = true
+port = 8081
 inspector_port = 8083
 
 [auth]
 enabled = true
-port = 54324
-site_url = "http://localhost:3000"
-additional_redirect_urls = ["https://localhost:3000"]
+site_url = "https://9000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369"
+additional_redirect_urls = ["https://9000-firebase-my-receipt-insight-1765033265736.cluster-dbvlwdg2xjd32ramv3nu373xpy.cloudworkstations.dev/?embedded=0&monospaceUid=311369", "https://*.googleusercontent.com/*"]
 jwt_expiry = 3600
 
 [auth.email]
@@ -30,12 +30,10 @@ enable_signup = true
 
 [storage]
 enabled = true
-port = 54325
 file_size_limit = "50MiB"
 
 [realtime]
 enabled = true
-port = 54326
 
 [analytics]
 enabled = false

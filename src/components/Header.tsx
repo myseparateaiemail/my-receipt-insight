@@ -2,7 +2,7 @@ import { Camera, BarChart3, Settings, LogOut } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import receiptLettuceIcon from "@/assets/receipt-lettuce-icon.png";
+import grocerPrimaryLogo from "@/assets/grocer-primary-logo.png";
 
 export const Header = () => {
   const { signOut, user } = useAuth();
@@ -13,16 +13,10 @@ export const Header = () => {
 
   return (
     <header className="bg-background border-b border-border sticky top-0 z-50 backdrop-blur-md bg-background/95">
-      <div className="container mx-auto px-4 py-4">
+      <div className="container mx-auto px-4 py-3">
         <div className="flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-primary to-primary-glow">
-              <img src={receiptLettuceIcon} alt="Receipt with lettuce" className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">grocer</h1>
-              <p className="text-sm text-muted-foreground">Smart grocery analytics</p>
-            </div>
+          <Link to="/" className="flex items-center gap-3 hover:opacity-90 transition-opacity">
+            <img src={grocerPrimaryLogo} alt="Grocer logo" className="h-14 w-auto" />
           </Link>
           
           <nav className="hidden md:flex items-center gap-2">

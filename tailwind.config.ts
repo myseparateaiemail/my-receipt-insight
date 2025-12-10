@@ -19,6 +19,9 @@ export default {
 		},
 		extend: {
 			colors: {
+				'mint-green': '#A7E8BD',
+				'emerald-green': '#00C897',
+				'dark-charcoal': '#374151',
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
