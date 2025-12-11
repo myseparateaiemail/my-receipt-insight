@@ -12,6 +12,7 @@ import {
 import { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart3 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 interface CategoryData {
   category: string;
@@ -25,6 +26,8 @@ interface CategoryBarChartProps {
 }
 
 export const CategoryBarChart = ({ data }: CategoryBarChartProps) => {
+  const navigate = useNavigate();
+
   const CustomTooltip = ({ active, payload }: TooltipProps<ValueType, NameType>) => {
     if (active && payload && payload.length) {
       const item = payload[0].payload as CategoryData;
@@ -75,7 +78,16 @@ export const CategoryBarChart = ({ data }: CategoryBarChartProps) => {
                   width={70}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="total" radius={[0, 4, 4, 0]}>
+                <Bar 
+                  dataKey="total" 
+                  radius={[0, 4, 4, 0]}
+                  onClick={(data) => {
+                    if (data && data.category) {
+                      navigate(`/analytics/category/${encodeURIComponent(data.category)}`);
+                    }
+                  }}
+                  className="cursor-pointer"
+                >
                   {data.slice(0, 8).map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}

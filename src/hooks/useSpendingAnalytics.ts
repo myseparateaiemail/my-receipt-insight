@@ -69,6 +69,7 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
         .select(`
           id,
           total_price,
+          quantity,
           category,
           created_at,
           receipt_id,
@@ -99,7 +100,13 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
           categoryTotals[category] = { total: 0, count: 0 };
         }
         categoryTotals[category].total += Number(item.total_price) || 0;
-        categoryTotals[category].count += 1;
+        
+        // Reporting Logic for "Items Count":
+        // - If quantity is Integer (e.g. 2.0), count as 2.
+        // - If quantity is Decimal (e.g. 0.315 kg), count as 1 item unit.
+        // - Fallback to 1 if missing.
+        const qty = Number(item.quantity) || 1;
+        categoryTotals[category].count += Number.isInteger(qty) ? qty : 1;
       });
 
       const categoryBreakdown: CategorySpending[] = Object.entries(categoryTotals)
@@ -115,9 +122,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       const monthlyData: Record<string, { total: number; categories: Record<string, number> }> = {};
       
       // Initialize months within the range
-      // For "All Time" ranges (1970-2099), iterating every month is too expensive and breaks the chart.
-      // Instead, we should only generate months present in the data for wide ranges.
-      
       const isWideRange = (toDate.getFullYear() - fromDate.getFullYear()) > 2;
 
       if (!isWideRange) {

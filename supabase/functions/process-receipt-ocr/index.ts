@@ -155,6 +155,10 @@ serve(async (req) => {
       Parsing Guidelines:
       1. **Store Name**: Identify the main store brand (e.g., Walmart, Real Canadian Superstore).
       2. **Items**: Extract every line item that represents a purchased product.
+         - **Item Merging (CRITICAL)**: Always merge identical items into a single line item with quantity > 1.
+           - If a receipt lists "Beans" twice at $1.00 each, output ONE item: { name: "Beans", quantity: 2, unit_price: 1.00, total_price: 2.00 }.
+           - If a receipt says "(2) ... 2 @ $1.69", output ONE item with quantity 2.
+           - This is critical for "Multi-buy" discounts. Do not list identical items separately.
          - **Product Code**: Look for numeric codes (UPC/SKU) often appearing next to the item name or price (e.g., "064420010040", "4011").
          - **Item Name**: The description text (e.g., "HOMO MILK", "BANANAS").
          - **Tax Codes**: Capture single letters like H, D, J, G, Z appearing at the end of the line.

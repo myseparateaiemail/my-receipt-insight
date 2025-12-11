@@ -2,6 +2,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, TooltipProps
 import { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart as PieChartIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 interface CategoryData {
   category: string;
@@ -30,6 +31,7 @@ interface CustomLabelProps {
 }
 
 export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
+  const navigate = useNavigate();
   const chartData: ChartDataItem[] = data.map((item) => ({
     name: item.category,
     value: item.total,
@@ -102,6 +104,12 @@ export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
                   innerRadius={40}
                   paddingAngle={2}
                   dataKey="value"
+                  onClick={(data) => {
+                    if (data && data.name) {
+                      navigate(`/analytics/category/${encodeURIComponent(data.name)}`);
+                    }
+                  }}
+                  className="cursor-pointer"
                 >
                   {chartData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />

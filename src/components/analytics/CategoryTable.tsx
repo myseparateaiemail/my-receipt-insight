@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { List } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 interface CategoryData {
   category: string;
@@ -22,6 +23,7 @@ interface CategoryTableProps {
 
 export const CategoryTable = ({ data }: CategoryTableProps) => {
   const totalSpending = data.reduce((sum, item) => sum + item.total, 0);
+  const navigate = useNavigate();
 
   return (
     <Card className="bg-gradient-to-br from-card to-muted/20">
@@ -48,7 +50,11 @@ export const CategoryTable = ({ data }: CategoryTableProps) => {
             </TableHeader>
             <TableBody>
               {data.map((item) => (
-                <TableRow key={item.category}>
+                <TableRow 
+                  key={item.category}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => navigate(`/analytics/category/${encodeURIComponent(item.category)}`)}
+                >
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <div

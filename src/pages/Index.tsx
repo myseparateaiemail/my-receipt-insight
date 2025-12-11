@@ -13,11 +13,14 @@ import heroImage from "@/assets/hero-image.jpg";
 import { ReceiptReview } from "@/components/ReceiptReview";
 import { ParsedReceiptData, ReceiptWithItems } from "@/types";
 import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 const Index = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   // State to hold the receipt currently being edited
   const [editingReceipt, setEditingReceipt] = useState<ReceiptWithItems | null>(null);
   // State to trigger a refresh of the recent receipts list
@@ -36,8 +39,38 @@ const Index = () => {
     queryClient.invalidateQueries({ queryKey: ["spending-analytics"] });
   };
 
-  const handleEditReceipt = (receipt: ReceiptWithItems) => {
-    setEditingReceipt(receipt);
+  const handleEditReceipt = async (receipt: ReceiptWithItems) => {
+    // Fetch sizes from verified_products to populate the edit view
+    // Since receipt_items table doesn't have size, we rely on the verified products knowledge base
+    const skus = receipt.items
+        .map((i) => i.product_code)
+        .filter((c): c is string => !!c && c.length >= 3);
+
+    let sizeMap: Record<string, string> = {};
+
+    if (skus.length > 0) {
+        const { data: verified } = await supabase
+            .from('verified_products')
+            .select('sku, size')
+            .in('sku', skus);
+        
+        if (verified) {
+            verified.forEach((v) => {
+                if (v.size) sizeMap[v.sku] = v.size;
+            });
+        }
+    }
+
+    // Attach size to items (casting to any to bypass strict type check for the temporary 'size' prop)
+    const itemsWithSize = receipt.items.map(item => ({
+        ...item,
+        size: item.product_code ? sizeMap[item.product_code] : undefined
+    }));
+
+    setEditingReceipt({
+        ...receipt,
+        items: itemsWithSize as any 
+    });
   };
 
   const handleFinishEditing = () => {
@@ -45,15 +78,123 @@ const Index = () => {
   };
 
   const handleApproval = async (finalData: ParsedReceiptData) => {
-    if (!editingReceipt) return;
+    if (!editingReceipt || !user) return;
 
-    console.log("Approved data to be saved:", finalData);
-    
-    // In a real scenario, you'd save this data to Supabase
-    // e.g., await supabase.from('receipts').update(...).eq('id', editingReceipt.id)
-    
-    setEditingReceipt(null); // Close the review component
-    handleUploadSuccess(); // Trigger a refresh of the receipt list
+    try {
+        // 1. Update Receipt Details
+        const { error: receiptError } = await supabase
+            .from('receipts')
+            .update({
+                store_name: finalData.store_name,
+                receipt_date: finalData.receipt_date, // This should be YYYY-MM-DD from the date picker
+                total_amount: finalData.total_amount,
+                subtotal_amount: finalData.subtotal_amount,
+                tax_amount: finalData.tax_amount,
+                card_last_four: finalData.card_last_four,
+                payment_method: finalData.payment_method,
+            })
+            .eq('id', editingReceipt.id);
+
+        if (receiptError) throw receiptError;
+
+        // 2. Update Items
+        // Strategy: Delete all existing items and re-insert current list
+        // This handles deleted items, new items, and modified items.
+        
+        const { error: deleteError } = await supabase
+            .from('receipt_items')
+            .delete()
+            .eq('receipt_id', editingReceipt.id);
+            
+        if (deleteError) throw deleteError;
+
+        if (finalData.items && finalData.items.length > 0) {
+            const itemsToInsert = finalData.items.map((item, index) => ({
+                receipt_id: editingReceipt.id,
+                item_name: item.item_name,
+                quantity: item.quantity,
+                total_price: item.total_price,
+                unit_price: item.unit_price,
+                product_code: item.product_code,
+                line_number: index + 1, // Re-index
+                category: item.category,
+                brand: item.brand,
+                description: item.description || (item as any).size || undefined, // mapping fallback
+                discount_amount: item.discount_amount || 0
+            }));
+
+            const { error: insertError } = await supabase
+                .from('receipt_items')
+                .insert(itemsToInsert);
+                
+            if (insertError) throw insertError;
+        }
+
+        // 3. Update Verified Products (Save the Size!)
+        const itemsToVerify = finalData.items?.filter(
+            (item) =>
+            item.product_code &&
+            item.item_name &&
+            !item.is_discount &&
+            item.product_code.length >= 3
+        );
+
+        if (itemsToVerify?.length > 0) {
+            for (const item of itemsToVerify) {
+                const storeChain = finalData.store_name?.includes("Superstore")
+                    ? "Real Canadian Superstore"
+                    : finalData.store_name || "Unknown";
+
+                const { data: existing } = await supabase
+                    .from("verified_products")
+                    .select("id, verification_count")
+                    .eq("sku", item.product_code as string)
+                    .eq("store_chain", storeChain)
+                    .maybeSingle();
+
+                if (existing) {
+                    await supabase
+                    .from("verified_products")
+                    .update({
+                        product_name: item.item_name,
+                        brand: item.brand || null,
+                        size: item.size || null,
+                        category: item.category || null,
+                        verification_count: (existing.verification_count || 0) + 1,
+                        last_verified_at: new Date().toISOString(),
+                    })
+                    .eq("id", existing.id);
+                } else {
+                    await supabase.from("verified_products").insert({
+                        sku: item.product_code as string,
+                        product_name: item.item_name,
+                        brand: item.brand || null,
+                        size: item.size || null,
+                        category: item.category || null,
+                        store_chain: storeChain,
+                        created_by: user.id,
+                        verification_count: 1,
+                    });
+                }
+            }
+        }
+
+        toast({
+          title: "Success",
+          description: "Receipt updated and verified data saved successfully",
+        });
+
+        setEditingReceipt(null);
+        handleUploadSuccess(); // Refresh list
+
+    } catch (error: any) {
+        console.error("Error updating receipt:", error);
+        toast({
+          title: "Error",
+          description: error.message || "Failed to update receipt",
+          variant: "destructive",
+        });
+    }
   };
 
   if (loading) {
@@ -152,7 +293,7 @@ const Index = () => {
                   line_number: item.line_number || undefined,
                   category: item.category || undefined,
                   brand: item.brand || undefined,
-                  size: undefined, // Add if available in ReceiptItem
+                  size: (item as any).size || undefined, // Use the fetched size
                   description: item.description || undefined,
                   discount_amount: item.discount_amount || undefined,
                   is_discount: false, // Default or logic to determine

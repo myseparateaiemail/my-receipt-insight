@@ -49,6 +49,28 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
     }
   };
 
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A';
+    try {
+      // Create date object treating the string as local time (midnight)
+      // Standard ISO string "YYYY-MM-DD" is treated as UTC by new Date(), 
+      // but splitting it lets us use the local constructor: new Date(y, m-1, d)
+      const parts = dateString.split('-');
+      if (parts.length === 3) {
+        const [year, month, day] = parts.map(Number);
+        const date = new Date(year, month - 1, day);
+        return date.toLocaleDateString(undefined, { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      }
+      return new Date(dateString).toLocaleDateString();
+    } catch (e) {
+      return dateString;
+    }
+  };
+
   if (error) {
     return <div>Error loading receipts: {error}</div>
   }
@@ -87,7 +109,7 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
                   <TableCell>
                     <Tooltip>
                       <TooltipTrigger className="cursor-help underline decoration-dotted">
-                         {new Date(receipt.receipt_date).toLocaleDateString()}
+                         {formatDate(receipt.receipt_date)}
                       </TooltipTrigger>
                       <TooltipContent>
                         <p>Raw: {receipt.receipt_date}</p>

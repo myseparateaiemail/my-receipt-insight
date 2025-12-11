@@ -334,31 +334,79 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   };
 
   // Parse receipt date from various formats to YYYY-MM-DD
-  const parseReceiptDate = (dateStr?: string): string => {
+  const parseReceiptDate = (dateStr?: string, storeName?: string): string => {
     if (!dateStr) return new Date().toISOString().split("T")[0];
 
-    // Handle format: YY/MM/DD HH:MM:SS (e.g., "25/07/30 19:46:28")
-    const shortYearMatch = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{2})/);
-    if (shortYearMatch) {
-      const [, yy, mm, dd] = shortYearMatch;
-      const year = parseInt(yy) < 50 ? `20${yy}` : `19${yy}`;
-      return `${year}-${mm}-${dd}`;
+    const cleanDate = dateStr.trim();
+
+    // 1. ISO Format: YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(cleanDate)) {
+      return cleanDate.split("T")[0];
     }
 
-    // Handle format: YYYY-MM-DD (already correct)
-    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-      return dateStr.split("T")[0];
+    // 2. Handle XX/XX/XX or XX-XX-XX or XX.XX.XX
+    const parts = cleanDate.split(/[\/\-\.]/);
+    if (parts.length === 3) {
+      const [p1, p2, p3] = parts;
+      
+      // Try to determine which part is the year
+      // If p3 is 4 digits, it's the year (DD/MM/YYYY or MM/DD/YYYY)
+      if (p3.length === 4) {
+        const year = p3;
+        // Ambiguous: p1/p2.
+        // If p1 > 12, it must be Day (DD/MM/YYYY)
+        if (parseInt(p1) > 12) {
+             return `${year}-${p2}-${p1}`; // DD/MM/YYYY -> YYYY-MM-DD
+        }
+        // If Store is Walmart, prefer MM/DD/YYYY
+        if (storeName && /walmart/i.test(storeName)) {
+             return `${year}-${p1}-${p2}`; // MM/DD/YYYY -> YYYY-MM-DD
+        }
+        // Default to Canadian standard DD/MM/YYYY otherwise? 
+        return `${year}-${p2}-${p1}`; 
+      }
+
+      // If p1 is 4 digits, it's YYYY/MM/DD
+      if (p1.length === 4) {
+        return `${p1}-${p2}-${p3}`;
+      }
+
+      // All 2 digits (or 1 digit)
+      // Heuristic based on User Input (Store Name)
+      // Superstore: YY/MM/DD
+      if (storeName && (/superstore/i.test(storeName) || /loblaw/i.test(storeName) || /no frills/i.test(storeName))) {
+        // Expecting YY/MM/DD
+        // But check if p1 looks like a year (e.g. 24, 25)
+        const year = parseInt(p1) < 50 ? `20${p1}` : `19${p1}`;
+        return `${year}-${p2}-${p3}`;
+      }
+      
+      // Walmart: MM/DD/YY
+      if (storeName && /walmart/i.test(storeName)) {
+         const year = parseInt(p3) < 50 ? `20${p3}` : `19${p3}`;
+         return `${year}-${p1}-${p2}`;
+      }
+
+      // General Fallback for 2-digit parts
+      // If p1 > 12, it's likely YY/MM/DD (e.g. 25/01/30)
+      if (parseInt(p1) > 12 && parseInt(p2) <= 12) {
+         const year = parseInt(p1) < 50 ? `20${p1}` : `19${p1}`;
+         return `${year}-${p2}-${p3}`;
+      }
+      
+      // If p3 matches current year short code (e.g. 24, 25), assume it's the year at the end
+      const currentYearShort = new Date().getFullYear() % 100;
+      if (parseInt(p3) >= currentYearShort - 1 && parseInt(p3) <= currentYearShort + 1) {
+         const year = parseInt(p3) < 50 ? `20${p3}` : `19${p3}`;
+         // Ambiguous: MM/DD/YY vs DD/MM/YY
+         // If p1 > 12, then p1 is Day -> DD/MM/YY
+         if (parseInt(p1) > 12) {
+            return `${year}-${p2}-${p1}`;
+         }
+         return `${year}-${p1}-${p2}`;
+      }
     }
 
-    // Handle format: DD/MM/YYYY or MM/DD/YYYY
-    const longYearMatch = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-    if (longYearMatch) {
-      const [, a, b, year] = longYearMatch;
-      // Assume DD/MM/YYYY for Canadian receipts
-      return `${year}-${b}-${a}`;
-    }
-
-    // Fallback to today's date
     return new Date().toISOString().split("T")[0];
   };
 
@@ -366,7 +414,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     if (!user || !reviewData) return;
 
     try {
-      const parsedDate = parseReceiptDate(finalData.receipt_date);
+      // Pass store_name to help with date parsing logic
+      const parsedDate = parseReceiptDate(finalData.receipt_date, finalData.store_name);
 
       // Create receipt record
       const { data: receipt, error: insertError } = await supabase
