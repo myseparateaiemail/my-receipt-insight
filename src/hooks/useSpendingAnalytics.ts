@@ -49,8 +49,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 export const useSpendingAnalytics = (dateRange?: DateRange) => {
   const { user } = useAuth();
 
-  // Default to last 6 months if no range provided
-  const defaultFrom = startOfMonth(subMonths(new Date(), 5));
+  // Default to last 12 months if no range provided (increased from 6 to catch older receipts)
+  const defaultFrom = startOfMonth(subMonths(new Date(), 12));
   const defaultTo = new Date();
   const fromDate = dateRange?.from || defaultFrom;
   const toDate = dateRange?.to || defaultTo;
@@ -131,11 +131,20 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
         const receiptDate = new Date(receiptData.receipt_date);
         const monthKey = receiptDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
         
+        // Only include if within our generated month keys (handles edge cases)
         if (monthlyData[monthKey]) {
           const category = item.category || "Other";
           monthlyData[monthKey].total += Number(item.total_price) || 0;
           monthlyData[monthKey].categories[category] = 
             (monthlyData[monthKey].categories[category] || 0) + (Number(item.total_price) || 0);
+        } else {
+           // If we are here, it means the receipt date's month key wasn't initialized.
+           // This can happen if the 'to' date is mid-month and the loop stopped, but the receipt is later in the month?
+           // The while loop condition is `currentDate <= toDate`. 
+           // If toDate is '2025-12-06', and loop is at Dec 1, it enters. Next iteration Jan 1 > toDate.
+           // So Dec should be covered.
+           // However, if the receipt is OLDER than fromDate? The API query filters gte fromStr.
+           // So it should be fine.
         }
       });
 

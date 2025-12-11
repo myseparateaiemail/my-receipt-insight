@@ -17,8 +17,9 @@ const Analytics = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   
+  // Default to 12 months to show more history by default
   const [dateRange, setDateRange] = useState<DateRange>({
-    from: startOfMonth(subMonths(new Date(), 5)),
+    from: startOfMonth(subMonths(new Date(), 12)),
     to: new Date(),
   });
 

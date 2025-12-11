@@ -12,10 +12,12 @@ import { Camera, BarChart3, Zap } from "lucide-react";
 import heroImage from "@/assets/hero-image.jpg";
 import { ReceiptReview } from "@/components/ReceiptReview";
 import { ParsedReceiptData, ReceiptWithItems } from "@/types";
+import { useQueryClient } from "@tanstack/react-query";
 
 const Index = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   // State to hold the receipt currently being edited
   const [editingReceipt, setEditingReceipt] = useState<ReceiptWithItems | null>(null);
   // State to trigger a refresh of the recent receipts list
@@ -30,6 +32,8 @@ const Index = () => {
   const handleUploadSuccess = () => {
     // Increment version to trigger a re-fetch in RecentReceipts
     setReceiptsVersion(v => v + 1);
+    // Invalidate spending analytics to refresh charts
+    queryClient.invalidateQueries({ queryKey: ["spending-analytics"] });
   };
 
   const handleEditReceipt = (receipt: ReceiptWithItems) => {

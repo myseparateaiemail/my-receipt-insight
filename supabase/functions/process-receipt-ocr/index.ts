@@ -57,7 +57,7 @@ const receiptSchema = {
           unit_price: { type: "NUMBER" },
           total_price: { type: "NUMBER" },
           discount_amount: { type: "NUMBER", description: "Positive number for savings" },
-          category: { type: "STRING" },
+          category: { type: "STRING", description: "One of: Produce, Dairy, Meats, Bakery, Beverages, Frozen, Pantry, Household, Deli, Dips, Coffee, Dessert, Other" },
           tax_code: { type: "STRING" },
           brand: { type: "STRING" },
           size: { type: "STRING" }
@@ -158,6 +158,7 @@ serve(async (req) => {
          - **Product Code**: Look for numeric codes (UPC/SKU) often appearing next to the item name or price (e.g., "064420010040", "4011").
          - **Item Name**: The description text (e.g., "HOMO MILK", "BANANAS").
          - **Tax Codes**: Capture single letters like H, D, J, G, Z appearing at the end of the line.
+         - **Category**: Classify into one of: Produce, Dairy, Meats, Bakery, Beverages, Frozen, Pantry, Household, Deli, Dips, Coffee, Dessert, Other.
       3. **Discounts**: Identify discounts (often negative numbers or marked with "Savings", "Member", "Multi-buy").
          - If a discount line follows an item, try to apply the discount_amount to that item if possible, or list it as a separate item with negative total_price.
       4. **Exclusions**: Do NOT include "SUBTOTAL", "HST", "GST", "TOTAL", "BALANCE DUE", or payment lines (VISA, DEBIT) in the 'items' array.

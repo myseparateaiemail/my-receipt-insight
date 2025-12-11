@@ -95,13 +95,13 @@ export const ReceiptReview = ({
   };
 
   const categoryOptions = [
-    "Bakery", "Baking Supplies", "Beverages", "Canned Goods", 
-    "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", 
+    "Bakery", "Baking Supplies", "Beverages", "Canned Goods", "Coffee",
+    "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", "Dessert",
     "Dips", "Entertainment", "Frozen", "Garden", "Health", "Household", 
     "International Foods", "Meats", "Natural Foods", "Pantry", 
     "Pasta & Grains", "Personal Care", "Produce", "Ready Made", 
     "Seafood", "Snacks", "Spices & Seasonings"
-  ];
+  ].sort();
 
   // Count items by confidence (excluding discount-only pseudo items)
   const regularItems = editedData.items;

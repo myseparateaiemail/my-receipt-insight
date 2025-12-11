@@ -6,7 +6,7 @@ import { startOfMonth, subMonths } from "date-fns";
 
 export const DashboardStats = () => {
   // We want stats specifically for "This Month" vs "Last Month"
-  // The default hook returns 6 months, so we can calculate from there.
+  // The default hook returns 12 months (updated default), so we can calculate from there.
   const { data, isLoading } = useSpendingAnalytics();
 
   if (isLoading) {
@@ -35,20 +35,6 @@ export const DashboardStats = () => {
     ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100 
     : 0;
 
-  // Receipts count
-  // Since monthlyTrends doesn't have receipt count per month explicitly in the interface defined in hook (it has categories total), 
-  // we might need to rely on the total summary or approximate. 
-  // Wait, the hook returns `receiptCount` which is TOTAL for the period.
-  // To get "Receipts Scanned This Month", we might be limited by the hook's current return signature.
-  // Ideally, `monthlyTrends` should include receipt count. 
-  // For now, let's use the TOTAL `receiptCount` from the hook for the period (last 6 months) 
-  // or just show total receipts if the backend supports it.
-  // Actually, looking at `useSpendingAnalytics.ts`, `receiptCount` is `(receipts || []).length`. 
-  // This is the total count over the requested date range (default 6 months).
-  
-  // Let's refine the hook usage or just display "Total Receipts" instead of "This Month" for now if granular data isn't available easily without refactoring the hook.
-  // Or better, let's assume the user wants to see the total stats available.
-  
   const stats = [
     {
       title: "This Month",
@@ -64,7 +50,7 @@ export const DashboardStats = () => {
       change: "0%", // We don't have historical avg per trip easily calculated yet
       trend: "neutral", 
       icon: ShoppingCart,
-      description: "last 6 months"
+      description: "last 12 months"
     },
     {
       title: "Receipts Scanned",
@@ -72,7 +58,7 @@ export const DashboardStats = () => {
       change: "", 
       trend: "neutral",
       icon: Calendar,
-      description: "total (last 6 mo)"
+      description: "total (last 12 mo)"
     },
     {
       title: "Top Category",

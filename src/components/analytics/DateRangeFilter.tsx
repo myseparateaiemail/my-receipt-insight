@@ -26,7 +26,7 @@ interface DateRangeFilterProps {
   onDateRangeChange: (range: DateRange) => void;
 }
 
-type PresetKey = "this-week" | "this-month" | "last-month" | "last-3-months" | "last-6-months" | "custom";
+type PresetKey = "this-week" | "this-month" | "last-month" | "last-3-months" | "last-6-months" | "last-12-months" | "all-time" | "custom";
 
 const presets: { key: PresetKey; label: string }[] = [
   { key: "this-week", label: "This Week" },
@@ -34,11 +34,14 @@ const presets: { key: PresetKey; label: string }[] = [
   { key: "last-month", label: "Last Month" },
   { key: "last-3-months", label: "Last 3 Months" },
   { key: "last-6-months", label: "Last 6 Months" },
+  { key: "last-12-months", label: "Last 12 Months" },
+  { key: "all-time", label: "All Time" },
   { key: "custom", label: "Custom Range" },
 ];
 
 export const DateRangeFilter = ({ dateRange, onDateRangeChange }: DateRangeFilterProps) => {
-  const [activePreset, setActivePreset] = useState<PresetKey>("last-6-months");
+  // Default to matching the parent's default (All Time)
+  const [activePreset, setActivePreset] = useState<PresetKey>("all-time");
   const [isCustomOpen, setIsCustomOpen] = useState(false);
 
   const handlePresetClick = (preset: PresetKey) => {
@@ -67,12 +70,21 @@ export const DateRangeFilter = ({ dateRange, onDateRangeChange }: DateRangeFilte
         from = startOfMonth(subMonths(now, 5));
         to = now;
         break;
+      case "last-12-months":
+        from = startOfMonth(subMonths(now, 11));
+        to = now;
+        break;
+      case "all-time":
+        from = new Date(0); // Epoch
+        to = new Date("2099-12-31"); // Far future to include everything
+        break;
       case "custom":
         setIsCustomOpen(true);
         setActivePreset("custom");
         return;
       default:
-        from = startOfMonth(subMonths(now, 5));
+        from = new Date(0);
+        to = new Date("2099-12-31");
     }
 
     setActivePreset(preset);
