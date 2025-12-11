@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { subMonths, startOfMonth } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import { useSpendingAnalytics, DateRange } from "@/hooks/useSpendingAnalytics";
 import { Header } from "@/components/Header";
@@ -17,10 +16,10 @@ const Analytics = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   
-  // Default to 12 months to show more history by default
+  // Default to "All Time" to ensure all receipts are visible
   const [dateRange, setDateRange] = useState<DateRange>({
-    from: startOfMonth(subMonths(new Date(), 12)),
-    to: new Date(),
+    from: new Date(0),
+    to: new Date("2099-12-31"),
   });
 
   const { data, isLoading, error, refetch } = useSpendingAnalytics(dateRange);

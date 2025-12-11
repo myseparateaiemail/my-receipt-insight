@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Badge } from './ui/badge';
 import { Camera } from 'lucide-react';
 import { ReceiptWithItems } from '@/types';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface RecentReceiptsProps {
   onEditReceipt: (receipt: ReceiptWithItems) => void;
@@ -32,8 +33,6 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
       console.error('Error fetching receipts:', error);
       setError(error.message);
     } else {
-      // Cast the result to the expected type, assuming Supabase types align or handling potential mismatches
-      // The `items` property from the join needs to be compatible with ReceiptWithItems['items']
       setReceipts(data as unknown as ReceiptWithItems[]);
     }
     setLoading(false);
@@ -71,6 +70,7 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
             </p>
           </div>
         ) : (
+          <TooltipProvider>
           <Table>
             <TableHeader>
               <TableRow>
@@ -84,7 +84,16 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
             <TableBody>
               {receipts.map((receipt) => (
                 <TableRow key={receipt.id}>
-                  <TableCell>{new Date(receipt.receipt_date).toLocaleDateString()}</TableCell>
+                  <TableCell>
+                    <Tooltip>
+                      <TooltipTrigger className="cursor-help underline decoration-dotted">
+                         {new Date(receipt.receipt_date).toLocaleDateString()}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Raw: {receipt.receipt_date}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell>{receipt.store_name}</TableCell>
                   <TableCell>${receipt.total_amount.toFixed(2)}</TableCell>
                   <TableCell>
@@ -100,6 +109,7 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
               ))}
             </TableBody>
           </Table>
+          </TooltipProvider>
         )}
       </CardContent>
     </Card>

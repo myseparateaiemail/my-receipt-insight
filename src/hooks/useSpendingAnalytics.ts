@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { format, subMonths, startOfMonth } from "date-fns";
+import { format } from "date-fns";
 
 interface CategorySpending {
   category: string;
@@ -49,9 +49,9 @@ const CATEGORY_COLORS: Record<string, string> = {
 export const useSpendingAnalytics = (dateRange?: DateRange) => {
   const { user } = useAuth();
 
-  // Default to last 12 months if no range provided (increased from 6 to catch older receipts)
-  const defaultFrom = startOfMonth(subMonths(new Date(), 12));
-  const defaultTo = new Date();
+  // Default to All Time (1970 to 2099) to ensure we capture all receipts regardless of date
+  const defaultFrom = new Date(0);
+  const defaultTo = new Date("2099-12-31");
   const fromDate = dateRange?.from || defaultFrom;
   const toDate = dateRange?.to || defaultTo;
 
@@ -115,46 +115,49 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       const monthlyData: Record<string, { total: number; categories: Record<string, number> }> = {};
       
       // Initialize months within the range
-      let currentDate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
-      while (currentDate <= toDate) {
-        const monthKey = currentDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-        monthlyData[monthKey] = { total: 0, categories: {} };
-        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+      // For "All Time" ranges (1970-2099), iterating every month is too expensive and breaks the chart.
+      // Instead, we should only generate months present in the data for wide ranges.
+      
+      const isWideRange = (toDate.getFullYear() - fromDate.getFullYear()) > 2;
+
+      if (!isWideRange) {
+        let currentDate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+        while (currentDate <= toDate) {
+          const monthKey = currentDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+          monthlyData[monthKey] = { total: 0, categories: {} };
+          currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+        }
       }
 
       (items || []).forEach((item) => {
         // Safe access to receipt_date through the join
-        // The type from Supabase for receipts!inner would be an object or array, here it is an object
-        // We cast to unknown then to a structure we expect to avoid 'any' if possible, 
-        // but since we know the shape from the query, we can access it safely.
         const receiptData = item.receipts as unknown as { receipt_date: string };
         const receiptDate = new Date(receiptData.receipt_date);
         const monthKey = receiptDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
         
-        // Only include if within our generated month keys (handles edge cases)
-        if (monthlyData[monthKey]) {
-          const category = item.category || "Other";
-          monthlyData[monthKey].total += Number(item.total_price) || 0;
-          monthlyData[monthKey].categories[category] = 
-            (monthlyData[monthKey].categories[category] || 0) + (Number(item.total_price) || 0);
-        } else {
-           // If we are here, it means the receipt date's month key wasn't initialized.
-           // This can happen if the 'to' date is mid-month and the loop stopped, but the receipt is later in the month?
-           // The while loop condition is `currentDate <= toDate`. 
-           // If toDate is '2025-12-06', and loop is at Dec 1, it enters. Next iteration Jan 1 > toDate.
-           // So Dec should be covered.
-           // However, if the receipt is OLDER than fromDate? The API query filters gte fromStr.
-           // So it should be fine.
+        if (!monthlyData[monthKey]) {
+           monthlyData[monthKey] = { total: 0, categories: {} };
         }
+
+        const category = item.category || "Other";
+        monthlyData[monthKey].total += Number(item.total_price) || 0;
+        monthlyData[monthKey].categories[category] = 
+          (monthlyData[monthKey].categories[category] || 0) + (Number(item.total_price) || 0);
       });
 
-      const monthlyTrends: MonthlySpending[] = Object.entries(monthlyData).map(([month, data]) => ({
-        month,
-        total: Math.round(data.total * 100) / 100,
-        categories: Object.fromEntries(
-          Object.entries(data.categories).map(([k, v]) => [k, Math.round(v * 100) / 100])
-        ),
-      }));
+      // Sort monthly data chronologically
+      const monthlyTrends: MonthlySpending[] = Object.entries(monthlyData)
+        .map(([month, data]) => ({
+          month,
+          total: Math.round(data.total * 100) / 100,
+          categories: Object.fromEntries(
+            Object.entries(data.categories).map(([k, v]) => [k, Math.round(v * 100) / 100])
+          ),
+          // We need a sortable date for sorting
+          _sortDate: new Date(Date.parse(`01 ${month}`)).getTime()
+        }))
+        .sort((a, b) => a._sortDate - b._sortDate)
+        .map(({ _sortDate, ...rest }) => rest);
 
       // Calculate summary stats
       const totalSpent = (receipts || []).reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
