@@ -41,6 +41,8 @@ const CATEGORY_COLORS: Record<string, string> = {
   Household: "hsl(270, 60%, 50%)",
   Deli: "hsl(340, 80%, 55%)",
   Dips: "hsl(160, 60%, 45%)",
+  Coffee: "hsl(30, 60%, 35%)",
+  Dessert: "hsl(330, 70%, 65%)",
   Other: "hsl(220, 13%, 50%)",
 };
 

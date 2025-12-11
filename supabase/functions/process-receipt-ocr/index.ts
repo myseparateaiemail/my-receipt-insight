@@ -8,7 +8,32 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Fixed: Using string literals ("STRING", "NUMBER") to avoid import errors
+// Internal types
+interface ParsedItem {
+  item_name: string;
+  product_code?: string;
+  quantity?: number;
+  unit_price?: number;
+  total_price: number;
+  discount_amount?: number;
+  category?: string;
+  tax_code?: string;
+  brand?: string;
+  size?: string;
+}
+
+interface ParsedReceipt {
+  store_name?: string;
+  store_address?: string;
+  receipt_date?: string;
+  total_amount?: number;
+  subtotal_amount?: number;
+  tax_amount?: number;
+  card_last_four?: string;
+  payment_method?: string;
+  items?: ParsedItem[];
+}
+
 const receiptSchema = {
   description: "Receipt data extracted from OCR text",
   type: "OBJECT",
@@ -42,7 +67,7 @@ const receiptSchema = {
     }
   },
   required: ["items", "total_amount", "store_name"]
-};
+} as const;
 
 // Helper: Base64 converter
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -77,6 +102,8 @@ serve(async (req) => {
     if (!imageRes.ok) throw new Error('Failed to fetch image');
     const imageBlob = await imageRes.blob();
     const imageBuffer = await imageBlob.arrayBuffer();
+    
+    console.log(`Image downloaded. Size: ${imageBuffer.byteLength} bytes`);
 
     // 3. Google Vision API (OCR)
     console.log('Sending to Google Vision API...');
@@ -94,7 +121,18 @@ serve(async (req) => {
       }
     );
 
+    if (!visionRes.ok) {
+        const errorBody = await visionRes.text();
+        throw new Error(`Vision API Error: ${visionRes.status} ${visionRes.statusText} - ${errorBody}`);
+    }
+
     const visionData = await visionRes.json();
+    
+    // Check for explicit API errors in the response body
+    if (visionData.responses?.[0]?.error) {
+        throw new Error(`Vision API Logic Error: ${JSON.stringify(visionData.responses[0].error)}`);
+    }
+
     const ocrText = visionData.responses?.[0]?.textAnnotations?.[0]?.description;
     
     if (!ocrText) throw new Error('No text found in receipt');
@@ -111,15 +149,40 @@ serve(async (req) => {
     });
 
     const prompt = `
-      You are an expert receipt parser for Canadian grocery stores.
+      You are an expert receipt parser for Canadian grocery stores (Walmart, Superstore, Loblaws, No Frills, etc.).
       Parse this OCR text into structured data.
+      
+      Parsing Guidelines:
+      1. **Store Name**: Identify the main store brand (e.g., Walmart, Real Canadian Superstore).
+      2. **Items**: Extract every line item that represents a purchased product.
+         - **Product Code**: Look for numeric codes (UPC/SKU) often appearing next to the item name or price (e.g., "064420010040", "4011").
+         - **Item Name**: The description text (e.g., "HOMO MILK", "BANANAS").
+         - **Tax Codes**: Capture single letters like H, D, J, G, Z appearing at the end of the line.
+      3. **Discounts**: Identify discounts (often negative numbers or marked with "Savings", "Member", "Multi-buy").
+         - If a discount line follows an item, try to apply the discount_amount to that item if possible, or list it as a separate item with negative total_price.
+      4. **Exclusions**: Do NOT include "SUBTOTAL", "HST", "GST", "TOTAL", "BALANCE DUE", or payment lines (VISA, DEBIT) in the 'items' array.
       
       OCR TEXT:
       ${ocrText}
     `;
 
     const result = await model.generateContent(prompt);
-    const parsedData = JSON.parse(result.response.text());
+    let rawText = result.response.text();
+    
+    // Cleanup: Remove markdown formatting if present (Gemini sometimes adds it despite schema)
+    if (rawText.startsWith('```json')) {
+        rawText = rawText.replace(/^```json/, '').replace(/```$/, '');
+    } else if (rawText.startsWith('```')) {
+        rawText = rawText.replace(/^```/, '').replace(/```$/, '');
+    }
+    
+    let parsedData: ParsedReceipt;
+    try {
+        parsedData = JSON.parse(rawText);
+    } catch (e) {
+        console.error("JSON Parse Error. Raw text:", rawText);
+        throw new Error(`Failed to parse Gemini response: ${e.message}`);
+    }
 
     // 5. Save to Supabase (Database)
     if (receiptId !== 'temp-processing') {
@@ -141,7 +204,7 @@ serve(async (req) => {
        if (updateError) throw updateError;
 
        if (parsedData.items?.length) {
-         const itemsToInsert = parsedData.items.map((item: any, idx: number) => ({
+         const itemsToInsert = parsedData.items.map((item, idx) => ({
            receipt_id: receiptId,
            item_name: item.item_name,
            product_code: item.product_code,
@@ -168,10 +231,16 @@ serve(async (req) => {
       message: "Processed with Gemini Direct" 
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { 
-      status: 500, 
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    
+    // Return the specific error to the client
+    return new Response(JSON.stringify({ 
+        success: false,
+        error: errorMessage 
+    }), { 
+      status: 500, // Keep 500 so client knows it failed, but provide details in body
       headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
     });
   }

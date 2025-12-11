@@ -8,6 +8,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Types for internal usage
+interface RequestItem {
+  product_code: string;
+  item_name: string;
+}
+
+interface ProcessItem {
+  sku: string;
+  name: string;
+}
+
+interface ProductInfo {
+  fullName: string;
+  brand?: string;
+  size?: string;
+  category?: string;
+  confidence: string;
+}
+
+interface VerifiedProduct {
+  sku: string;
+  product_name: string;
+  brand?: string;
+  size?: string;
+  category?: string;
+}
+
 const productInfoSchema = {
   description: "Product information extracted from SKU and abbreviation",
   type: "OBJECT",
@@ -18,7 +45,7 @@ const productInfoSchema = {
     category: { type: "STRING", description: "Grocery category" }
   },
   required: ["fullName"]
-};
+} as const;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -36,12 +63,12 @@ serve(async (req) => {
     const { sku, items } = await req.json();
     
     // Normalize input: handle both single item request and batch 'items' request
-    const itemsToProcess = items 
-      ? items.map((i: any) => ({ sku: i.product_code, name: i.item_name })) 
-      : [{ sku, name: '' }];
+    const itemsToProcess: ProcessItem[] = items 
+      ? items.map((i: RequestItem) => ({ sku: i.product_code, name: i.item_name })) 
+      : (sku ? [{ sku, name: '' }] : []);
     
-    const results: Record<string, any> = {};
-    const skusToLookup = itemsToProcess.map((i: any) => i.sku).filter((s: string) => s);
+    const results: Record<string, ProductInfo> = {};
+    const skusToLookup = itemsToProcess.map((i) => i.sku).filter((s) => s);
 
     // 1. Check Verified Products Table first
     if (skusToLookup.length > 0) {
@@ -51,7 +78,7 @@ serve(async (req) => {
         .in('sku', skusToLookup);
 
       if (!error && verifiedData) {
-        verifiedData.forEach((product: any) => {
+        verifiedData.forEach((product: VerifiedProduct) => {
           results[product.sku] = {
             fullName: product.product_name,
             brand: product.brand,
@@ -64,7 +91,7 @@ serve(async (req) => {
     }
 
     // 2. Filter out items that were already found
-    const remainingItems = itemsToProcess.filter((item: any) => !results[item.sku]);
+    const remainingItems = itemsToProcess.filter((item) => !results[item.sku]);
 
     if (remainingItems.length > 0) {
       const genAI = new GoogleGenerativeAI(geminiApiKey);
@@ -76,7 +103,7 @@ serve(async (req) => {
         },
       });
 
-      await Promise.all(remainingItems.map(async (item: any) => {
+      await Promise.all(remainingItems.map(async (item) => {
         if (!item.name) return;
         
         const prompt = `Identify this Canadian grocery product.\nSKU: ${item.sku}\nName: ${item.name}\nReturn JSON with fullName, brand, size, category.`;
@@ -95,8 +122,9 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }

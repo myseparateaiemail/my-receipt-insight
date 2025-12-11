@@ -40,11 +40,16 @@ export const MonthlyTrendChart = ({ data }: MonthlyTrendChartProps) => {
   const hasData = data.some((d) => d.total > 0);
 
   // Calculate trend
-  const recentMonths = data.slice(-2);
-  const trendPercent =
-    recentMonths.length === 2 && recentMonths[0].total > 0
-      ? ((recentMonths[1].total - recentMonths[0].total) / recentMonths[0].total) * 100
-      : 0;
+  // Filter out months with 0 total to find the actual last active months
+  const activeMonths = data.filter(d => d.total > 0);
+  const lastMonth = activeMonths[activeMonths.length - 1];
+  const previousMonth = activeMonths[activeMonths.length - 2];
+
+  let trendPercent: number | null = null;
+  
+  if (lastMonth && previousMonth) {
+    trendPercent = ((lastMonth.total - previousMonth.total) / previousMonth.total) * 100;
+  }
 
   return (
     <Card className="bg-gradient-to-br from-card to-accent/5">
@@ -54,7 +59,7 @@ export const MonthlyTrendChart = ({ data }: MonthlyTrendChartProps) => {
             <TrendingUp className="h-5 w-5 text-accent" />
             Monthly Spending Trend
           </CardTitle>
-          {hasData && (
+          {hasData && trendPercent !== null && (
             <div
               className={`text-sm font-medium px-2 py-1 rounded ${
                 trendPercent >= 0
@@ -63,8 +68,13 @@ export const MonthlyTrendChart = ({ data }: MonthlyTrendChartProps) => {
               }`}
             >
               {trendPercent >= 0 ? "+" : ""}
-              {trendPercent.toFixed(1)}% vs last month
+              {trendPercent.toFixed(1)}% vs last active month
             </div>
+          )}
+          {hasData && trendPercent === null && (
+             <div className="text-sm font-medium px-2 py-1 rounded bg-muted/20 text-muted-foreground">
+               No previous data
+             </div>
           )}
         </div>
       </CardHeader>

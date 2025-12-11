@@ -20,6 +20,15 @@ interface CategoryPieChartProps {
   data: CategoryData[];
 }
 
+interface CustomLabelProps {
+  cx: number;
+  cy: number;
+  midAngle: number;
+  innerRadius: number;
+  outerRadius: number;
+  percent: number;
+}
+
 export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
   const chartData: ChartDataItem[] = data.map((item) => ({
     name: item.category,
@@ -45,7 +54,7 @@ export const CategoryPieChart = ({ data }: CategoryPieChartProps) => {
     return null;
   };
 
-  const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+  const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: CustomLabelProps) => {
     if (percent < 0.05) return null;
     const RADIAN = Math.PI / 180;
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
