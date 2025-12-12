@@ -88,11 +88,17 @@ serve(async (req) => {
     const geminiApiKey = Deno.env.get('GOOGLE_GENERATIVE_AI_API_KEY');
     const visionApiKey = Deno.env.get('GOOGLE_CLOUD_API_KEY');
 
-    if (!supabaseUrl || !serviceKey || !geminiApiKey || !visionApiKey) {
-      throw new Error('Missing configuration keys. Check your .env file.');
+    const missingKeys = [];
+    if (!supabaseUrl) missingKeys.push('SUPABASE_URL');
+    if (!serviceKey) missingKeys.push('SUPABASE_SERVICE_ROLE_KEY');
+    if (!geminiApiKey) missingKeys.push('GOOGLE_GENERATIVE_AI_API_KEY');
+    if (!visionApiKey) missingKeys.push('GOOGLE_CLOUD_API_KEY');
+
+    if (missingKeys.length > 0) {
+      throw new Error(`Missing configuration keys: ${missingKeys.join(', ')}. Check your .env file or Supabase secrets.`);
     }
 
-    const supabase = createClient(supabaseUrl, serviceKey);
+    const supabase = createClient(supabaseUrl!, serviceKey!);
     const { receiptId, imageUrl } = await req.json();
 
     console.log(`Processing receipt: ${receiptId}`);
@@ -137,11 +143,12 @@ serve(async (req) => {
     
     if (!ocrText) throw new Error('No text found in receipt');
 
-    // 4. Gemini 2.5 Flash (Parsing)
-    console.log('Sending to Gemini 2.5 Flash...');
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    // 4. Gemini 1.5 Flash (Parsing)
+    console.log('Sending to Gemini 1.5 Flash...');
+    const genAI = new GoogleGenerativeAI(geminiApiKey!);
+    // Switch to a known stable model. 2.5 might have been a typo or hallucination.
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash-latest", 
+      model: "gemini-1.5-flash", 
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: receiptSchema,
@@ -174,11 +181,10 @@ serve(async (req) => {
     const result = await model.generateContent(prompt);
     let rawText = result.response.text();
     
-    // Cleanup: Remove markdown formatting if present (Gemini sometimes adds it despite schema)
-    if (rawText.startsWith('```json')) {
-        rawText = rawText.replace(/^```json/, '').replace(/```$/, '');
-    } else if (rawText.startsWith('```')) {
-        rawText = rawText.replace(/^```/, '').replace(/```$/, '');
+    // Improved Cleanup: Find the JSON block using Regex
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        rawText = jsonMatch[0];
     }
     
     let parsedData: ParsedReceipt;

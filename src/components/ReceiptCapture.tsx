@@ -119,9 +119,24 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       if (ocrError) {
         console.error("OCR processing error:", ocrError);
+        // Extract error message from the response if available
+        let errorMessage = "Failed to process receipt text.";
+        
+        // Try to parse the error body if it exists in the error object (Supabase specific)
+        // Note: The structure of ocrError depends on the client library version and error type
+        if (ocrError && typeof ocrError === 'object') {
+           if ('message' in ocrError) {
+               errorMessage = ocrError.message as string;
+           }
+           // Sometimes the response body is in a 'context' or similar, or just the error itself
+        }
+        
+        // Sometimes the invoke returns error but data might contain the error message from our function
+        // Check if we can get more info.
+        
         toast({
           title: "Processing Error",
-          description: "Failed to process receipt text. Please try again.",
+          description: `${errorMessage} Please check console for details.`,
           variant: "destructive",
         });
         return;
@@ -129,9 +144,10 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
       if (!ocrResult?.success || !ocrResult?.parsedData) {
         console.error("OCR returned invalid data:", ocrResult);
+        const failMessage = ocrResult?.error || "Could not extract data from receipt.";
         toast({
           title: "Processing Error",
-          description: "Could not extract data from receipt. Please try again.",
+          description: failMessage,
           variant: "destructive",
         });
         return;
