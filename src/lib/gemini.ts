@@ -45,7 +45,7 @@ export const processReceiptWithGeminiClient = async (
             "unit_price": { "type": "NUMBER" },
             "total_price": { "type": "NUMBER" },
             "discount_amount": { "type": "NUMBER", "description": "Positive number for savings" },
-            "category": { "type": "STRING", "description": "One of: Produce, Dairy, Meats, Bakery, Baking, Baking Supplies, Beverages, Canned Goods, Cleaning, Frozen, Pantry, Household, Deli, Dips, Coffee, Dessert, Other" },
+            "category": { "type": "STRING", "description": "One of: Produce, Dairy, Meats, Bakery, Baking, Baking Supplies, Beverages, Canned Goods, Cleaning, Frozen, Pantry, Household, Laundry, Deli, Dips, Coffee, Dessert, Other" },
             "tax_code": { "type": "STRING" },
             "brand": { "type": "STRING" },
             "size": { "type": "STRING" }

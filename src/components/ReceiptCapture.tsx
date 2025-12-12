@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Camera, Upload, Check, Zap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { ReceiptReview } from "./ReceiptReview";
 import { OcrItem, ParsedReceiptData, VerifiedProduct } from "@/types";
 import { processReceiptWithGeminiClient } from "@/lib/gemini";
+
+const STORAGE_KEY = 'grocer_receipt_draft';
 
 interface ReceiptCaptureProps {
   onUploadSuccess?: () => void;
@@ -41,6 +43,38 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
+
+  // Restore draft on mount
+  useEffect(() => {
+    const draft = localStorage.getItem(STORAGE_KEY);
+    if (draft) {
+      try {
+        const parsedDraft = JSON.parse(draft);
+        if (parsedDraft.imageUrl && parsedDraft.parsedData) {
+          setReviewData(parsedDraft);
+          setReviewMode(true);
+          setCapturedImage(parsedDraft.imageUrl);
+          toast({
+            title: "Draft Restored",
+            description: "We restored your unsaved receipt edits.",
+          });
+        }
+      } catch (e) {
+        console.error("Failed to restore draft", e);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  }, []);
+
+  const handleDataChange = (newData: ParsedReceiptData) => {
+    if (reviewData) {
+      const draft = {
+        ...reviewData,
+        parsedData: newData
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    }
+  };
 
   const handleCapture = () => {
     setIsCapturing(true);
@@ -331,12 +365,17 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         enrichedParsedData = { ...enrichedParsedData, items: finalItems };
       }
 
-      setReviewData({
+      const newReviewData = {
         imageUrl: publicUrl,
         rawText: ocrResult.ocrText || "",
         parsedData: enrichedParsedData,
         receiptId: "",
-      });
+      };
+
+      setReviewData(newReviewData);
+      
+      // Save initial draft
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newReviewData));
 
       setUploadProgress(100);
       setReviewMode(true);
@@ -566,6 +605,9 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           `Saved ${itemsToVerify.length} products to verified database`
         );
       }
+      
+      // Clear draft on success
+      localStorage.removeItem(STORAGE_KEY);
 
       toast({
         title: "Success!",
@@ -588,6 +630,9 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   };
 
   const handleReject = () => {
+    // Clear draft on reject
+    localStorage.removeItem(STORAGE_KEY);
+    
     setReviewMode(false);
     setReviewData(null);
     setCapturedImage(null);
@@ -611,6 +656,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         onApprove={handleApprove}
         onReject={handleReject}
         onCancel={handleCancel}
+        onDataChange={handleDataChange}
       />
     );
   }

@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Lightbulb, TrendingDown, Star, AlertTriangle, Info } from "lucide-react";
+import { Lightbulb, TrendingDown, Star, AlertTriangle, Info, Store } from "lucide-react";
 import { useSpendingAnalytics } from "@/hooks/useSpendingAnalytics";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -41,7 +41,7 @@ export const InsightsPanel = () => {
     if (topCategory.total > 0) {
       insights.push({
         type: "spending",
-        icon: TrendingDown, // Using TrendingDown as a generic "money" related icon or attention
+        icon: TrendingDown, 
         title: "Top Spending Category",
         description: `You spent $${topCategory.total.toFixed(2)} on ${topCategory.category}, which is your highest expense.`,
         impact: "High",
@@ -72,8 +72,20 @@ export const InsightsPanel = () => {
       category: "General"
     });
   }
+  
+  // 3. Top Store Insight
+  if (data?.topStore && data.topStore !== "None" && data.topStore !== "Unknown") {
+    insights.push({
+        type: "store",
+        icon: Store,
+        title: "Favorite Store",
+        description: `Your most visited store is ${data.topStore}.`,
+        impact: "Info",
+        category: "Shopping"
+    });
+  }
 
-  // 3. Fallback or additional random tip if we have data
+  // 4. Fallback or additional random tip if we have data
   if (data?.receiptCount === 0) {
     insights.push({
       type: "empty",

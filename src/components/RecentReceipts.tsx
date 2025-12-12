@@ -119,8 +119,15 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
                   <TableCell>{receipt.store_name}</TableCell>
                   <TableCell>${receipt.total_amount.toFixed(2)}</TableCell>
                   <TableCell>
-                    <Badge variant={receipt.processing_status === 'completed' ? 'secondary' : 'secondary'}>
-                      {receipt.processing_status}
+                    <Badge 
+                      variant="outline"
+                      className={
+                        receipt.processing_status === 'completed' 
+                          ? "bg-green-100 text-green-700 hover:bg-green-200 border-green-200" 
+                          : "bg-secondary text-secondary-foreground"
+                      }
+                    >
+                      {receipt.processing_status.charAt(0).toUpperCase() + receipt.processing_status.slice(1)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

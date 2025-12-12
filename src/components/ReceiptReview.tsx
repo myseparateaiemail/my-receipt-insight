@@ -32,6 +32,7 @@ interface ReceiptReviewProps {
   onApprove: (finalData: ParsedReceiptData) => void;
   onReject: () => void;
   onCancel: () => void;
+  onDataChange?: (data: ParsedReceiptData) => void;
 }
 
 export const ReceiptReview = ({
@@ -40,7 +41,8 @@ export const ReceiptReview = ({
   parsedData,
   onApprove,
   onReject,
-  onCancel
+  onCancel,
+  onDataChange
 }: ReceiptReviewProps) => {
   const [showRawText, setShowRawText] = useState(false);
   const [editedData, setEditedData] = useState<ParsedReceiptData>(parsedData);
@@ -70,6 +72,13 @@ export const ReceiptReview = ({
     };
     fetchStores();
   }, []);
+
+  // Autosave / Notify parent of changes
+  useEffect(() => {
+    if (onDataChange) {
+      onDataChange(editedData);
+    }
+  }, [editedData, onDataChange]);
 
   const updateStoreInfo = (field: keyof ParsedReceiptData, value: string | number) => {
     setEditedData(prev => ({
@@ -139,7 +148,7 @@ export const ReceiptReview = ({
     "Bakery", "Baking", "Baking Supplies", "Beverages", "Canned Goods", "Cleaning", "Coffee",
     "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", "Dessert",
     "Dips", "Entertainment", "Frozen", "Garden", "Health", "Household", 
-    "International Foods", "Meats", "Natural Foods", "Pantry", 
+    "International Foods", "Laundry", "Meats", "Natural Foods", "Pantry", 
     "Pasta & Grains", "Personal Care", "Produce", "Ready Made", 
     "Seafood", "Snacks", "Spices & Seasonings"
   ].sort();

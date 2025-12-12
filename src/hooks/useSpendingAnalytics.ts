@@ -23,6 +23,7 @@ interface SpendingAnalytics {
   averagePerReceipt: number;
   receiptCount: number;
   topCategory: string;
+  topStore: string;
 }
 
 export interface DateRange {
@@ -84,7 +85,7 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       // Fetch receipts for totals within date range
       const { data: receipts, error: receiptsError } = await supabase
         .from("receipts")
-        .select("id, total_amount, receipt_date")
+        .select("id, total_amount, receipt_date, store_name")
         .eq("user_id", user.id)
         .gte("receipt_date", fromStr)
         .lte("receipt_date", toStr);
@@ -101,10 +102,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
         }
         categoryTotals[category].total += Number(item.total_price) || 0;
         
-        // Reporting Logic for "Items Count":
-        // - If quantity is Integer (e.g. 2.0), count as 2.
-        // - If quantity is Decimal (e.g. 0.315 kg), count as 1 item unit.
-        // - Fallback to 1 if missing.
         const qty = Number(item.quantity) || 1;
         categoryTotals[category].count += Number.isInteger(qty) ? qty : 1;
       });
@@ -121,7 +118,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       // Calculate monthly trends based on date range
       const monthlyData: Record<string, { total: number; categories: Record<string, number> }> = {};
       
-      // Initialize months within the range
       const isWideRange = (toDate.getFullYear() - fromDate.getFullYear()) > 2;
 
       if (!isWideRange) {
@@ -134,7 +130,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       }
 
       (items || []).forEach((item) => {
-        // Safe access to receipt_date through the join
         const receiptData = item.receipts as unknown as { receipt_date: string };
         const receiptDate = new Date(receiptData.receipt_date);
         const monthKey = receiptDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
@@ -149,7 +144,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
           (monthlyData[monthKey].categories[category] || 0) + (Number(item.total_price) || 0);
       });
 
-      // Sort monthly data chronologically
       const monthlyTrends: MonthlySpending[] = Object.entries(monthlyData)
         .map(([month, data]) => ({
           month,
@@ -157,7 +151,6 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
           categories: Object.fromEntries(
             Object.entries(data.categories).map(([k, v]) => [k, Math.round(v * 100) / 100])
           ),
-          // We need a sortable date for sorting
           _sortDate: new Date(Date.parse(`01 ${month}`)).getTime()
         }))
         .sort((a, b) => a._sortDate - b._sortDate)
@@ -168,6 +161,14 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
       const receiptCount = (receipts || []).length;
       const averagePerReceipt = receiptCount > 0 ? totalSpent / receiptCount : 0;
       const topCategory = categoryBreakdown[0]?.category || "None";
+      
+      // Calculate Top Store
+      const storeCounts: Record<string, number> = {};
+      (receipts || []).forEach(r => {
+          const store = r.store_name || "Unknown";
+          storeCounts[store] = (storeCounts[store] || 0) + 1;
+      });
+      const topStore = Object.entries(storeCounts).sort((a,b) => b[1] - a[1])[0]?.[0] || "None";
 
       return {
         categoryBreakdown,
@@ -176,6 +177,7 @@ export const useSpendingAnalytics = (dateRange?: DateRange) => {
         averagePerReceipt: Math.round(averagePerReceipt * 100) / 100,
         receiptCount,
         topCategory,
+        topStore,
       };
     },
     enabled: !!user,

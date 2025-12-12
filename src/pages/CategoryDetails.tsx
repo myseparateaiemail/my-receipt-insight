@@ -1,9 +1,9 @@
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Check } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -14,10 +14,66 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format } from "date-fns";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
+
+const categoryOptions = [
+  "Bakery", "Baking", "Baking Supplies", "Beverages", "Canned Goods", "Cleaning", "Coffee",
+  "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", "Dessert",
+  "Dips", "Entertainment", "Frozen", "Garden", "Health", "Household", 
+  "International Foods", "Laundry", "Meats", "Natural Foods", "Pantry", 
+  "Pasta & Grains", "Personal Care", "Produce", "Ready Made", 
+  "Seafood", "Snacks", "Spices & Seasonings"
+].sort();
+
+const EditableCell = ({ value, onSave, className }: { value: string, onSave: (val: string) => void, className?: string }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState(value);
+
+  const handleSave = () => {
+    if (tempValue !== value) {
+      onSave(tempValue);
+    }
+    setIsEditing(false);
+  };
+
+  if (isEditing) {
+    return (
+      <Input
+        value={tempValue}
+        onChange={(e) => setTempValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+        autoFocus
+        className={`h-8 ${className}`}
+      />
+    );
+  }
+
+  return (
+    <div 
+      onClick={() => setIsEditing(true)} 
+      className={`cursor-pointer hover:bg-muted/50 p-1 rounded -ml-1 border border-transparent hover:border-border transition-colors ${className}`}
+      title="Click to edit"
+    >
+      {value}
+    </div>
+  );
+};
 
 const CategoryDetails = () => {
   const { categoryName } = useParams();
   const category = categoryName || "";
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: items, isLoading, error } = useQuery({
     queryKey: ["category-details", category],
@@ -71,6 +127,71 @@ const CategoryDetails = () => {
     },
     enabled: !!category,
   });
+
+  const updateProduct = async (item: any, updates: { item_name?: string; category?: string }) => {
+    try {
+      // 1. Update receipt_items
+      const { error: itemError } = await supabase
+        .from("receipt_items")
+        .update(updates)
+        .eq("id", item.id);
+
+      if (itemError) throw itemError;
+
+      // 2. If SKU exists, update verified_products for future accuracy
+      if (item.product_code && item.product_code.length >= 3) {
+        const storeChain = item.receipts?.store_name?.includes("Superstore") 
+          ? "Real Canadian Superstore" 
+          : item.receipts?.store_name || "Unknown";
+
+        const { data: existing } = await supabase
+            .from("verified_products")
+            .select("id")
+            .eq("sku", item.product_code)
+            .maybeSingle();
+
+        const verifiedUpdates: any = {};
+        if (updates.item_name) verifiedUpdates.product_name = updates.item_name;
+        if (updates.category) verifiedUpdates.category = updates.category;
+        verifiedUpdates.last_verified_at = new Date().toISOString();
+
+        if (existing) {
+             await supabase
+            .from("verified_products")
+            .update(verifiedUpdates)
+            .eq("id", existing.id);
+        } else {
+             // Insert new
+             await supabase
+             .from("verified_products")
+             .insert({
+                 sku: item.product_code,
+                 store_chain: storeChain,
+                 product_name: updates.item_name || item.item_name,
+                 category: updates.category || item.category,
+                 verification_count: 1,
+                 ...verifiedUpdates
+             });
+        }
+      }
+
+      toast({
+        title: "Updated",
+        description: "Product information updated successfully.",
+      });
+
+      // Refetch data
+      queryClient.invalidateQueries({ queryKey: ["category-details"] });
+
+    } catch (err: any) {
+      console.error("Update failed:", err);
+      toast({
+        title: "Error",
+        description: "Failed to update product.",
+        variant: "destructive",
+      });
+    }
+  };
 
   if (isLoading) {
     return (
@@ -130,6 +251,7 @@ const CategoryDetails = () => {
                   <TableHead className="w-[60px]">Qty</TableHead>
                   <TableHead>Brand</TableHead>
                   <TableHead>Product Name</TableHead>
+                  <TableHead>Category</TableHead>
                   <TableHead>Size</TableHead>
                   <TableHead className="text-right">Total Price</TableHead>
                   <TableHead>Date</TableHead>
@@ -143,12 +265,6 @@ const CategoryDetails = () => {
                   const displayQty = isDecimal ? 1 : rawQty;
                   
                   // Logic for "Size" column:
-                  // 1. If it's a decimal quantity, it represents a weight.
-                  //    Since we don't store the unit, we assume 'kg' for Canadian context.
-                  //    This ensures "0.32" becomes "0.32 kg".
-                  // 2. If it's an integer, we look for the static Verified Product size (e.g. "540 ml").
-                  // 3. Fallback to "-"
-                  
                   let displaySize = item.verified_size;
                   
                   if (isDecimal) {
@@ -163,7 +279,29 @@ const CategoryDetails = () => {
                         {displayQty}
                       </TableCell>
                       <TableCell>{item.brand || "-"}</TableCell>
-                      <TableCell className="font-medium">{item.item_name}</TableCell>
+                      <TableCell className="font-medium">
+                        <EditableCell 
+                          value={item.item_name} 
+                          onSave={(newName) => updateProduct(item, { item_name: newName })} 
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={item.category}
+                          onValueChange={(newCategory) => updateProduct(item, { category: newCategory })}
+                        >
+                          <SelectTrigger className="h-8 w-[140px] text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categoryOptions.map((opt) => (
+                              <SelectItem key={opt} value={opt} className="text-xs">
+                                {opt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
                       <TableCell>
                         {displaySize !== "-" ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary text-secondary-foreground">
