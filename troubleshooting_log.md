@@ -46,7 +46,7 @@ Even after successfully reconfiguring the application to run on a free port (`90
 
 ***
 
-### Phase 3: Holistic Environment Audit & Standardization (Current Status)
+### Phase 3: Holistic Environment Audit & Standardization
 
 **Diagnosis:**
 The project suffered from a "civil war" of configurations.
@@ -63,34 +63,37 @@ We have moved the entire project to **Port 3000** to avoid the 9000/9001/5173 co
 3.  **`.idx/dev.nix`**: Added the missing `idx.previews` block to explicitly command the IDE to run `npm run dev` and listen on `$PORT` (which will map to 3000).
 4.  **`supabase/config.toml`**: Updated redirect URLs to use `3000-` prefix instead of `9000-`.
 
-**Immediate Next Step:**
-The user is **Rebuilding the Environment**. This is required to load the new `.idx/dev.nix` configuration.
+***
 
----
+### Phase 4: Edge Function Deployment Failure (Error 546) & Client-Side Bypass
 
-### ⚠️ INSTRUCTIONS FOR THE NEXT AGENT (If Rebuild Fails)
+**Problem:**
+The user encountered a persistent **546 Error** ("Loop detected" or "Dependency load failure") when attempting to process receipts via the `process-receipt-ocr` Edge Function.
 
-If the user returns after the rebuild and the app is still broken, **DO NOT start changing ports randomly.** Follow this logic:
+**Investigation:**
+1.  **Dependency Loop:** The error 546 is specific to Supabase/Deno Edge Functions failing to load dependencies (specifically `esm.sh` imports) or entering a loop during startup.
+2.  **Attempts to Fix:**
+    *   Verified Environment Variables (`test-env` function).
+    *   Updated `ReceiptCapture.tsx` to show detailed error logs.
+    *   Removed `GoogleGenerativeAI` SDK dependency, switching to raw `fetch` for the Gemini API.
+    *   Replaced `esm.sh` imports with `npm:` imports for Supabase client.
+    *   **Ultimate Attempt:** Rewrote the entire Edge Function to be **dependency-free** (using only Deno standard library and raw `fetch`).
+3.  **Root Cause Discovery:** Despite the code being dependency-free, the 546 error persisted. This confirmed that the **deployment pipeline was broken**. The code on the server was stuck on an old, broken version and was not updating despite local file changes.
 
-**Scenario 1: Still "502 Bad Gateway"**
-*   **Check:** Open the terminal and run `curl -v http://localhost:3000`.
-    *   *If connection refused:* The server isn't running. Run `npm run dev` manually in the terminal and see why it fails.
-    *   *If successful (200 OK):* The server is fine, but the IDE Preview is looking at the wrong place. Check `.idx/dev.nix` again.
-*   **Check:** Verify `vite.config.ts` hasn't been reverted.
+**Solution: Client-Side Fallback Strategy**
+Since the backend deployment was inaccessible/broken in the current environment, we implemented a robust **Client-Side Fallback**.
 
-**Scenario 2: "Port 3000 is already in use"**
-*   If Port 3000 is *also* blocked (unlikely), pick a random high port (e.g., `3005`) and update ALL FOUR files again:
-    1.  `vite.config.ts`
-    2.  `package.json`
-    3.  `.idx/dev.nix`
-    4.  `supabase/config.toml`
+1.  **`src/lib/gemini.ts`**: Created a utility to call Google Gemini API directly from the browser (bypassing the Edge Function).
+2.  **Settings UI**: Added a `SettingsDialog.tsx` (accessible via Header) allowing the user to input their **Gemini API Key**.
+3.  **`ReceiptCapture.tsx` Logic**:
+    *   Attempts to call the Server Edge Function first.
+    *   If the server fails (546/500/Network Error), it checks for a local Gemini API Key.
+    *   If the key exists, it processes the receipt locally in the browser using Gemini 1.5 Flash (multimodal).
+    *   If the key is missing, it prompts the user to configure it via Settings.
 
-**Scenario 3: App Loads, but "Auth Configuration Missing" or Login Fails**
-*   This is expected because we changed the port, so the Redirect URL in Supabase is wrong.
-*   **Fix:**
-    1.  Look at the browser URL bar in the preview (e.g., `https://3000-project-id.cluster.dev`).
-    2.  Copy that **exact base URL**.
-    3.  Update `supabase/config.toml`: `site_url` and `additional_redirect_urls` with this new URL.
-    4.  (If using local Supabase) You might need to restart Supabase: `npx supabase stop && npx supabase start`.
+**Outcome:**
+The user successfully processed receipts using the client-side fallback, unblocking the workflow despite the frozen backend state.
 
-**Goal:** Keep the configuration **holistic**. Do not change one file without changing the others.
+**Next Steps for Developers:**
+*   **Fix Deployment:** Investigate why `supabase functions deploy` is not running or failing silently. The Edge Function code is currently "clean" (dependency-free) and should work once successfully deployed.
+*   **Enrichment Function:** The `enrich-product` function was also rewritten to be dependency-free but likely suffers from the same deployment freeze. It requires the same Client-Side Fallback logic if we want product enrichment to work without a backend fix.

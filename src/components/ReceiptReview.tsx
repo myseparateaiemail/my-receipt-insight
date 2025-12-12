@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Check, X, Plus, Trash2, Eye, EyeOff, CheckCircle2, HelpCircle, AlertTriangle } from "lucide-react";
+import { Check, X, Plus, Trash2, Eye, EyeOff, CheckCircle2, HelpCircle, AlertTriangle, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ParsedReceiptData, OcrItem } from "@/types";
+import { ParsedReceiptData } from "@/types";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 interface ReceiptReviewProps {
   receiptImage: string;
@@ -29,33 +44,32 @@ export const ReceiptReview = ({
 }: ReceiptReviewProps) => {
   const [showRawText, setShowRawText] = useState(false);
   const [editedData, setEditedData] = useState<ParsedReceiptData>(parsedData);
+  const [availableStores, setAvailableStores] = useState<string[]>([]);
+  const [openStoreCombobox, setOpenStoreCombobox] = useState(false);
 
   // Initialize data: Try to ensure date is in YYYY-MM-DD for the date input
   useEffect(() => {
     if (parsedData.receipt_date) {
-      // Re-use the same logic we have in ReceiptCapture but slightly simpler just for display initialization
-      // Note: We can't easily import the function from ReceiptCapture so we rely on what passed in
-      // or try to standardise it if it looks like a date.
-      
-      // If the date is already YYYY-MM-DD, it's fine. 
-      // If it's something else, we let the user fix it, but the type="date" input might show empty if invalid.
-      // So we make a best effort to format it for the input.
-      
       const dateStr = parsedData.receipt_date.trim();
-      let formattedDate = dateStr;
-
-      // Simple regex check for YYYY-MM-DD
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-          // If it matches XX/XX/XX or similar, we might want to try to convert it for the input
-          // But since we can't be sure of the format here without the store context logic (which is in ReceiptCapture),
-          // we might just leave it. However, type="date" will wipe it if invalid.
-          // Let's rely on the user to pick the date if it's not already valid ISO.
-      }
-      
-      // We don't overwrite editedData here because it might cause a loop or overwrite user edits if not careful.
-      // Initial state is set in useState(parsedData).
+      // Logic to keep date as is or let user edit
     }
   }, [parsedData]);
+
+  // Fetch verified stores (unique store names from receipt history)
+  useEffect(() => {
+    const fetchStores = async () => {
+      const { data } = await supabase
+        .from('receipts')
+        .select('store_name')
+        .order('store_name', { ascending: true });
+      
+      if (data) {
+        const uniqueStores = Array.from(new Set(data.map(r => r.store_name).filter(Boolean))) as string[];
+        setAvailableStores(uniqueStores);
+      }
+    };
+    fetchStores();
+  }, []);
 
   const updateStoreInfo = (field: keyof ParsedReceiptData, value: string | number) => {
     setEditedData(prev => ({
@@ -122,7 +136,7 @@ export const ReceiptReview = ({
   };
 
   const categoryOptions = [
-    "Bakery", "Baking Supplies", "Beverages", "Canned Goods", "Coffee",
+    "Bakery", "Baking", "Baking Supplies", "Beverages", "Canned Goods", "Cleaning", "Coffee",
     "Condiments & Sauces", "Cosmetics & Pharmacy", "Dairy", "Deli", "Dessert",
     "Dips", "Entertainment", "Frozen", "Garden", "Health", "Household", 
     "International Foods", "Meats", "Natural Foods", "Pantry", 
@@ -130,7 +144,7 @@ export const ReceiptReview = ({
     "Seafood", "Snacks", "Spices & Seasonings"
   ].sort();
 
-  // Count items by confidence (excluding discount-only pseudo items)
+  // Count items by confidence
   const regularItems = editedData.items;
   const verifiedCount = regularItems.filter(i => i.confidence === 'verified').length;
   const aiCount = regularItems.filter(i => i.confidence === 'ai_suggested').length;
@@ -208,14 +222,70 @@ export const ReceiptReview = ({
                   </h4>
                   
                   <div className="grid grid-cols-1 gap-3">
-                    <div>
+                    <div className="flex flex-col gap-1.5">
                       <Label htmlFor="store_name" className="text-xs">Store Name</Label>
-                      <Input
-                        id="store_name"
+                      <Popover open={openStoreCombobox} onOpenChange={setOpenStoreCombobox}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={openStoreCombobox}
+                            className="w-full justify-between h-8"
+                          >
+                            {editedData.store_name || "Select store..."}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[300px] p-0">
+                          <Command>
+                            <CommandInput placeholder="Search store..." />
+                            <CommandList>
+                              <CommandEmpty>No store found. Type to add new.</CommandEmpty>
+                              <CommandGroup heading="Recent Stores">
+                                {availableStores.map((store) => (
+                                  <CommandItem
+                                    key={store}
+                                    value={store}
+                                    onSelect={(currentValue) => {
+                                      updateStoreInfo("store_name", currentValue);
+                                      setOpenStoreCombobox(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        editedData.store_name === store ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {store}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                              <Separator />
+                              <CommandGroup>
+                                <CommandItem onSelect={() => {
+                                  // This is a bit tricky with Combobox standard behavior, usually we'd use the input value.
+                                  // For now, let's assume the user will type in the input box if they want a new one,
+                                  // but shadcn Combobox filters.
+                                  // We'll let them type in a regular input if they don't like the dropdown,
+                                  // OR we can make the input editable.
+                                  // Standard pattern: "Create 'X'" item.
+                                }}>
+                                  <span className="text-muted-foreground text-xs">To add a new store, verify spelling and it will be saved.</span>
+                                </CommandItem>
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                      
+                      {/* Fallback Input for manual entry if combobox is annoying or for simple editing */}
+                       <Input
+                        id="store_name_manual"
                         value={editedData.store_name || ""}
                         onChange={(e) => updateStoreInfo("store_name", e.target.value)}
-                        placeholder="Enter store name"
-                        className="h-8"
+                        placeholder="Or type store name here..."
+                        className="h-8 mt-1"
                       />
                     </div>
                     
