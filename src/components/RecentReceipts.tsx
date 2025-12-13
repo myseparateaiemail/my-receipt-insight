@@ -99,8 +99,8 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
                 <TableHead>Date</TableHead>
                 <TableHead>Store</TableHead>
                 <TableHead>Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[100px]"></TableHead>
+                <TableHead className="text-right w-[100px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -119,20 +119,10 @@ const RecentReceipts = ({ onEditReceipt }: RecentReceiptsProps) => {
                   <TableCell>{receipt.store_name}</TableCell>
                   <TableCell>${receipt.total_amount.toFixed(2)}</TableCell>
                   <TableCell>
-                    <Badge 
-                      variant="outline"
-                      className={
-                        receipt.processing_status === 'completed' 
-                          ? "bg-green-100 text-green-700 hover:bg-green-200 border-green-200" 
-                          : "bg-secondary text-secondary-foreground"
-                      }
-                    >
-                      {receipt.processing_status.charAt(0).toUpperCase() + receipt.processing_status.slice(1)}
-                    </Badge>
+                    <Button variant="secondary" size="sm" onClick={() => onEditReceipt(receipt)} className="w-full">Edit</Button>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="outline" size="sm" onClick={() => onEditReceipt(receipt)}>Edit</Button>
-                    <Button variant="destructive" size="sm" onClick={() => handleDelete(receipt.id)} className="ml-2">Delete</Button>
+                    <Button variant="destructive" size="sm" onClick={() => handleDelete(receipt.id)} className="w-full">Delete</Button>
                   </TableCell>
                 </TableRow>
               ))}
