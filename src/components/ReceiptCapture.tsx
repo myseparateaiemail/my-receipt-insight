@@ -225,11 +225,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           confidence: "ocr", // Start with base confidence
         }));
 
-        const storeChain = enrichedParsedData.store_name?.includes(
-          "Superstore"
-        )
-          ? "Real Canadian Superstore"
-          : enrichedParsedData.store_name || "Unknown";
+        // NOTE: We no longer need to filter by store_chain because SKUs are now global!
+        // const storeChain = enrichedParsedData.store_name?.includes("Superstore") ? ...
 
         // 2. Separate items that have a product code for lookup
         const itemsToLookup = itemsWithFlags.filter(
@@ -251,8 +248,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
             await supabase
               .from("verified_products")
               .select("*")
-              .in("sku", lookupSkus)
-              .eq("store_chain", storeChain);
+              .in("sku", lookupSkus);
+              // REMOVED: .eq("store_chain", storeChain); 
 
           if (verifiedError) {
             console.error("Error fetching verified products:", verifiedError);
@@ -612,7 +609,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
             .from("verified_products")
             .select("id, verification_count")
             .eq("sku", item.product_code as string)
-            .eq("store_chain", storeChain)
+            // REMOVED: .eq("store_chain", storeChain) -- No longer needed, SKU is global
             .maybeSingle();
 
           if (existing) {
@@ -636,7 +633,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
               brand: item.brand || null,
               size: item.size || null,
               category: item.category || null,
-              store_chain: storeChain,
+              store_chain: storeChain, // We still save it for reference, but it's not part of the unique key anymore
               created_by: user.id,
               verification_count: 1,
             });

@@ -53,9 +53,12 @@ This environment does **not** use Docker or a local Supabase instance. Instead, 
     * `brand` (Text)
     * **Note:** This table does **NOT** store `size`. Size is dynamically joined from `verified_products` on the frontend or stored in `description` as a fallback.
 * **`verified_products`**: Lookup table for high-confidence SKU data (Source of Truth for Product Details).
-    * `sku` (Unique Identifier)
+    * `sku` (Unique Identifier) - **Globally Unique** (Shared across all stores).
     * `size` (Text, e.g., "400 ml")
     * `product_name` (Cleaned name)
+*   **`receipt_categories`**:
+    *   **System Categories:** Rows with `user_id = NULL`. Shared by all users.
+    *   **User Categories:** Rows with `user_id = [UUID]`. Custom categories for specific users.
 
 ## Critical Business Logic (Edge Functions)
 
@@ -84,6 +87,8 @@ To ensure accurate analytics across unit-based items (cans) and weighted items (
 
 ### Data Governance & Quality
 *   **Historical Data Fix (Dec 2025):** Ran migration `20251210000000_consolidate_split_items.sql` to clean up past data. This script identified receipts with split lines (same SKU/Name on multiple rows), summed their totals, and merged them into a single "survivor" row.
+*   **System Category Cleanup (Dec 2025):** Removed redundant user-specific copies of system categories. The system now references a single shared set of "System Categories" (`user_id = NULL`).
+*   **SKU Consolidation (Dec 2025):** Enforced global uniqueness for SKUs in `verified_products`, allowing product knowledge to be shared across stores (e.g., a UPC verified at Walmart is now recognized at Superstore).
 *   **Ingestion Normalization:** The `process-receipt-ocr` function now enforces this consolidation at the point of entry, ensuring new data matches the historical standard.
 
 ## Frontend Routes & Views
