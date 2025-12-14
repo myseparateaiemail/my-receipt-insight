@@ -9,6 +9,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { ReceiptReview } from "./ReceiptReview";
 import { OcrItem, ParsedReceiptData, VerifiedProduct } from "@/types";
 import { processReceiptWithGeminiClient } from "@/lib/gemini";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STORAGE_KEY = 'grocer_receipt_draft';
 
@@ -41,6 +51,8 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
   );
   const [reviewMode, setReviewMode] = useState(false);
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
+  const [duplicateReceiptData, setDuplicateReceiptData] = useState<ParsedReceiptData | null>(null);
+  
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -488,7 +500,36 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
     return new Date().toISOString().split("T")[0];
   };
 
-  const handleApprove = async (finalData: ParsedReceiptData) => {
+  const checkForDuplicate = async (data: ParsedReceiptData): Promise<boolean> => {
+    if (!user) return false;
+    
+    const parsedDate = parseReceiptDate(data.receipt_date, data.store_name);
+    
+    // Round to 2 decimal places to match DB numeric(10,2)
+    const roundedTotal = data.total_amount 
+      ? Math.round((data.total_amount + Number.EPSILON) * 100) / 100 
+      : 0;
+    
+    console.log(`Checking duplicate: Store=${data.store_name}, Date=${parsedDate}, Total=${roundedTotal}`);
+
+    // Use select instead of maybeSingle to handle multiple duplicates safely
+    const { data: existing, error } = await supabase
+        .from('receipts')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('store_name', data.store_name)
+        .eq('receipt_date', parsedDate)
+        .eq('total_amount', roundedTotal);
+    
+    if (error) {
+        console.error("Error checking duplicate:", error);
+        return false;
+    }
+
+    return !!(existing && existing.length > 0);
+  };
+
+  const saveReceipt = async (finalData: ParsedReceiptData) => {
     if (!user || !reviewData) return;
 
     try {
@@ -502,7 +543,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
           user_id: user.id,
           image_url: reviewData.imageUrl,
           receipt_date: parsedDate,
-          total_amount: finalData.total_amount || 0,
+          total_amount: finalData.total_amount ? Math.round((finalData.total_amount + Number.EPSILON) * 100) / 100 : 0,
           subtotal_amount: finalData.subtotal_amount,
           tax_amount: finalData.tax_amount,
           store_name: finalData.store_name,
@@ -618,6 +659,7 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
       setReviewMode(false);
       setReviewData(null);
       setCapturedImage(null);
+      setDuplicateReceiptData(null);
       onUploadSuccess?.();
     } catch (error) {
       console.error("Save failed:", error);
@@ -626,6 +668,15 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
         description: "Failed to save receipt. Please try again.",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleApprove = async (finalData: ParsedReceiptData) => {
+    const isDuplicate = await checkForDuplicate(finalData);
+    if (isDuplicate) {
+        setDuplicateReceiptData(finalData);
+    } else {
+        await saveReceipt(finalData);
     }
   };
 
@@ -649,15 +700,36 @@ export const ReceiptCapture = ({ onUploadSuccess }: ReceiptCaptureProps) => {
 
   if (reviewMode && reviewData) {
     return (
-      <ReceiptReview
-        receiptImage={reviewData.imageUrl}
-        rawOcrText={reviewData.rawText}
-        parsedData={reviewData.parsedData}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onCancel={handleCancel}
-        onDataChange={handleDataChange}
-      />
+      <>
+        <ReceiptReview
+          receiptImage={reviewData.imageUrl}
+          rawOcrText={reviewData.rawText}
+          parsedData={reviewData.parsedData}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onCancel={handleCancel}
+          onDataChange={handleDataChange}
+        />
+        
+        <AlertDialog open={!!duplicateReceiptData} onOpenChange={(open) => !open && setDuplicateReceiptData(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Duplicate Receipt Detected</AlertDialogTitle>
+              <AlertDialogDescription>
+                It looks like you've already saved a receipt from <span className="font-medium text-foreground">{duplicateReceiptData?.store_name}</span> on <span className="font-medium text-foreground">{duplicateReceiptData?.receipt_date}</span> for <span className="font-medium text-foreground">${duplicateReceiptData?.total_amount ? (Math.round((duplicateReceiptData.total_amount + Number.EPSILON) * 100) / 100).toFixed(2) : "0.00"}</span>.
+                <br /><br />
+                Saving this will create a duplicate entry in your spending reports. Are you sure you want to proceed?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setDuplicateReceiptData(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => duplicateReceiptData && saveReceipt(duplicateReceiptData)}>
+                Save Anyway
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
     );
   }
 

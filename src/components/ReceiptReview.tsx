@@ -330,7 +330,7 @@ export const ReceiptReview = ({
                           id="subtotal"
                           type="number"
                           step="0.01"
-                          value={editedData.subtotal_amount || ""}
+                          value={editedData.subtotal_amount ? Math.round(editedData.subtotal_amount * 100) / 100 : ""}
                           onChange={(e) => updateStoreInfo("subtotal_amount", parseFloat(e.target.value))}
                           placeholder="0.00"
                           className="h-8"
@@ -342,7 +342,7 @@ export const ReceiptReview = ({
                           id="tax"
                           type="number"
                           step="0.01"
-                          value={editedData.tax_amount || ""}
+                          value={editedData.tax_amount ? Math.round(editedData.tax_amount * 100) / 100 : ""}
                           onChange={(e) => updateStoreInfo("tax_amount", parseFloat(e.target.value))}
                           placeholder="0.00"
                           className="h-8"
@@ -354,7 +354,7 @@ export const ReceiptReview = ({
                           id="total"
                           type="number"
                           step="0.01"
-                          value={editedData.total_amount || ""}
+                          value={editedData.total_amount ? Math.round(editedData.total_amount * 100) / 100 : ""}
                           onChange={(e) => updateStoreInfo("total_amount", parseFloat(e.target.value))}
                           placeholder="0.00"
                           className="h-8"
@@ -483,7 +483,8 @@ export const ReceiptReview = ({
                                 updateItem(index, "quantity", qty);
                                 const discount = item.discount_amount || 0;
                                 if (item.unit_price) {
-                                  updateItem(index, "total_price", (qty * item.unit_price) - Math.abs(discount));
+                                  const total = (qty * item.unit_price) - Math.abs(discount);
+                                  updateItem(index, "total_price", Math.round(total * 100) / 100);
                                 }
                               }}
                               className="h-7 text-xs"
@@ -494,12 +495,13 @@ export const ReceiptReview = ({
                             <Input
                               type="number"
                               step="0.01"
-                              value={item.unit_price || ""}
+                              value={item.unit_price ? Math.round(item.unit_price * 100) / 100 : ""}
                               onChange={(e) => {
                                 const unitPrice = parseFloat(e.target.value) || 0;
                                 updateItem(index, "unit_price", unitPrice);
                                 const discount = item.discount_amount || 0;
-                                updateItem(index, "total_price", (item.quantity * unitPrice) - Math.abs(discount));
+                                const total = (item.quantity * unitPrice) - Math.abs(discount);
+                                updateItem(index, "total_price", Math.round(total * 100) / 100);
                               }}
                               placeholder="0.00"
                               className="h-7 text-xs"
@@ -510,12 +512,13 @@ export const ReceiptReview = ({
                             <Input
                               type="number"
                               step="0.01"
-                              value={item.discount_amount || ""}
+                              value={item.discount_amount ? Math.round(item.discount_amount * 100) / 100 : ""}
                               onChange={(e) => {
                                 const discount = parseFloat(e.target.value) || 0;
                                 updateItem(index, "discount_amount", discount);
                                 if (item.unit_price) {
-                                  updateItem(index, "total_price", (item.quantity * item.unit_price) - Math.abs(discount));
+                                  const total = (item.quantity * item.unit_price) - Math.abs(discount);
+                                  updateItem(index, "total_price", Math.round(total * 100) / 100);
                                 }
                               }}
                               placeholder=""
@@ -527,7 +530,7 @@ export const ReceiptReview = ({
                             <Input
                               type="number"
                               step="0.01"
-                              value={item.total_price}
+                              value={typeof item.total_price === 'number' ? Math.round(item.total_price * 100) / 100 : item.total_price}
                               onChange={(e) => updateItem(index, "total_price", parseFloat(e.target.value) || 0)}
                               placeholder="0.00"
                               className="h-7 text-xs font-medium"
