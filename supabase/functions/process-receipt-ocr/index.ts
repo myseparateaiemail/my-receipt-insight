@@ -73,15 +73,30 @@ serve(async (req) => {
     };
 
     const promptText = `
-      You are an expert receipt parser. Parse this receipt image into structured data.
-      
+      You are an expert receipt parser acting as a Data Normalization Agent. Your goal is to convert varied receipt formats into a single, standardized JSON structure.
+
       Parsing Guidelines:
       1. **Store Name**: Identify the main store brand.
-      2. **Items**: Extract every line item.
-         - **Item Merging**: Merge identical items into single line with quantity > 1.
+      2. **Items (CRITICAL NORMALIZATION STEP)**:
+         Regardless of how the receipt displays items, you must output **ONE unique entry per product type**.
+         
+         **Scenario A: Grouped Line Items (e.g., Real Canadian Superstore)**
+         - Look for explicitly grouped quantities.
+         - **(N) Prefix**: "(2)0333..." -> Quantity 2.
+         - **N @ $Price**: "2 @ $0.88" -> Quantity 2, Unit Price $0.88.
+         - **Multi-buy**: "4 @ 4/$2.00" -> Quantity 4, Total Price $2.00.
+         
+         **Scenario B: Split Line Items (e.g., Walmart, Farm Boy)**
+         - If the receipt lists the exact same item on multiple lines (e.g., "Lean Ground Beef" appears on line 5 and line 8):
+         - **CONSOLIDATE**: Merge them into a SINGLE JSON item.
+         - **SUM**: Add their quantities (1 + 1 = 2) and add their prices to get the total_price.
+         
+         **Scenario C: Weighted Items**
+         - Allow decimal quantities (e.g., 0.315 kg).
+
       3. **Discounts**: Identify discounts.
-      4. **Financials**: Accurately extract 'subtotal_amount' and 'tax_amount' from the bottom of the receipt. Look for keywords like "SUBTOTAL", "HST", "GST", "TAX", "TVH".
-      5. **Exclusions**: Do not include subtotal or tax lines as items in the items list.
+      4. **Financials**: Accurately extract 'subtotal_amount' and 'tax_amount'.
+      5. **Exclusions**: Do not include subtotal or tax lines as items.
     `;
 
     // Use gemini-1.5-flash

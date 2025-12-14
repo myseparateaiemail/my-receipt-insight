@@ -16,7 +16,6 @@ port = 54323
 
 [edge_runtime]
 enabled = true
-port = 8081
 inspector_port = 8083
 
 [auth]
